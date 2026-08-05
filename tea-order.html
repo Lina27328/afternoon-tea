@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>下午茶團購訂單</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', 'Microsoft JhengHei', sans-serif; background: linear-gradient(180deg, #fff8e1 0%, #fff3cd 30%, #fffde7 100%); min-height: 100vh; color: #4a3728; padding: 20px; }
+        .container { max-width: 900px; margin: 0 auto; }
+        h1 { text-align: center; color: #d84315; margin-bottom: 10px; font-size: 1.8em; }
+        .subtitle { text-align: center; color: #8d6e63; margin-bottom: 25px; font-size: 0.9em; }
+        .card { background: #fff; border: 2px solid #ffe0b2; border-radius: 16px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 16px rgba(255,152,0,0.08); }
+        .card h3 { color: #e65100; margin-bottom: 12px; font-size: 1.1em; }
+        .form-group { margin-bottom: 12px; }
+        .form-group label { display: block; font-size: 0.8em; color: #8d6e63; margin-bottom: 4px; }
+        .form-group input, .form-group textarea { width: 100%; padding: 10px 12px; border: 2px solid #ffe0b2; border-radius: 10px; background: #fffde7; color: #4a3728; font-size: 0.9em; outline: none; }
+        .form-group input:focus, .form-group textarea:focus { border-color: #ff9800; }
+        textarea { resize: vertical; min-height: 150px; font-family: inherit; }
+        .btn { padding: 10px 18px; border: none; border-radius: 10px; font-size: 0.9em; font-weight: bold; cursor: pointer; transition: all 0.2s; }
+        .btn-primary { background: linear-gradient(135deg, #ff9800, #f57c00); color: #fff; }
+        .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(255,152,0,0.4); }
+        .btn-success { background: linear-gradient(135deg, #66bb6a, #43a047); color: #fff; }
+        .btn-danger { background: linear-gradient(135deg, #ef5350, #c62828); color: #fff; }
+        .btn-sm { padding: 6px 12px; font-size: 0.8em; }
+        .order-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 2px solid #fff3e0; flex-wrap: wrap; gap: 8px; }
+        .order-header h3 { margin: 0; }
+        .order-item { display: flex; align-items: center; padding: 12px 14px; border-bottom: 1px solid #fff3e0; gap: 12px; transition: background 0.2s; }
+        .order-item:hover { background: #fff8e1; }
+        .order-item:last-child { border-bottom: none; }
+        .order-item.checked { opacity: 0.55; background: #f1f8e9; }
+        .order-item.checked .item-name, .order-item.checked .item-detail { text-decoration: line-through; }
+        .checkbox { width: 24px; height: 24px; border: 2px solid #ffb74d; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all 0.2s; }
+        .checkbox.checked { background: #66bb6a; border-color: #43a047; }
+        .checkbox.checked::after { content: '✓'; color: #fff; font-weight: bold; font-size: 14px; }
+        .item-name { font-weight: 600; color: #5d4037; min-width: 60px; max-width: 180px; cursor: pointer; border-bottom: 1px dashed transparent; }
+        .item-name:hover { border-bottom-color: #ff9800; color: #e65100; }
+        .item-detail { flex: 1; color: #8d6e63; font-size: 0.85em; line-height: 1.4; }
+        .item-amount { font-weight: bold; color: #e65100; min-width: 70px; text-align: right; white-space: nowrap; }
+        .item-amount .subtotal { font-size: 0.75em; color: #8d6e63; display: block; }
+        .item-delete { color: #ef9a9a; cursor: pointer; font-size: 0.8em; padding: 4px 8px; border: 1px solid #ef9a9a; border-radius: 6px; flex-shrink: 0; }
+        .item-delete:hover { background: #ffcdd2; color: #c62828; }
+        .summary { display: flex; gap: 15px; padding: 15px; background: #fff3e0; border-radius: 12px; margin-top: 15px; flex-wrap: wrap; }
+        .summary-item { text-align: center; flex: 1; min-width: 80px; }
+        .summary-item .label { font-size: 0.72em; color: #8d6e63; margin-bottom: 4px; }
+        .summary-item .value { font-size: 1.2em; font-weight: bold; }
+        .summary-item .value.total { color: #e65100; }
+        .summary-item .value.collected { color: #2e7d32; }
+        .summary-item .value.uncollected { color: #c62828; }
+        .parse-hint { font-size: 0.76em; color: #bcaaa4; margin-top: 8px; line-height: 1.6; }
+        .order-list-empty { text-align: center; padding: 40px; color: #bcaaa4; }
+        .history-item { padding: 12px; border: 1px solid #ffe0b2; border-radius: 10px; margin-bottom: 10px; transition: all 0.2s; }
+        .history-item:hover { border-color: #ff9800; background: #fff8e1; }
+        .history-item .h-title { font-weight: 600; color: #5d4037; }
+        .history-item .h-meta { font-size: 0.8em; color: #8d6e63; margin-top: 4px; }
+        .manual-add { display: flex; gap: 8px; margin-bottom: 15px; flex-wrap: wrap; align-items: center; }
+        .manual-add input { padding: 8px 12px; border: 2px solid #ffe0b2; border-radius: 8px; background: #fffde7; font-size: 0.85em; outline: none; }
+        .manual-add input:focus { border-color: #ff9800; }
+        .tab-bar { display: flex; gap: 0; margin-bottom: 20px; border: 2px solid #ffe0b2; border-radius: 12px; overflow: hidden; }
+        .tab-btn { flex: 1; padding: 12px; border: none; background: #fff; color: #8d6e63; font-size: 0.9em; cursor: pointer; transition: all 0.2s; font-weight: 500; }
+        .tab-btn.active { background: #fff3e0; color: #e65100; font-weight: 600; }
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.4); z-index: 999; justify-content: center; align-items: center; }
+        .modal-overlay.active { display: flex; }
+        .modal { background: #fff; border: 2px solid #ffe0b2; border-radius: 20px; padding: 25px; width: 90%; max-width: 380px; }
+        .modal h3 { color: #e65100; margin-bottom: 12px; }
+        .modal input { width: 100%; padding: 10px 14px; border: 2px solid #ffe0b2; border-radius: 10px; background: #fffde7; color: #4a3728; font-size: 1em; margin-bottom: 15px; outline: none; }
+        .modal input:focus { border-color: #ff9800; }
+        .modal-btns { display: flex; gap: 10px; justify-content: flex-end; }
+        .modal-btn { padding: 8px 18px; border: none; border-radius: 8px; cursor: pointer; font-weight: 500; }
+        .modal-btn.cancel { background: #f5f5f5; color: #757575; }
+        .modal-btn.confirm { background: #ff9800; color: #fff; }
+        /* Drop zone */
+        .drop-zone { border: 3px dashed #ffcc80; border-radius: 16px; padding: 40px 20px; text-align: center; cursor: pointer; transition: all 0.3s; background: #fffde7; margin-bottom: 15px; }
+        .drop-zone:hover, .drop-zone.dragover { border-color: #ff9800; background: #fff3e0; transform: scale(1.01); }
+        .drop-zone .icon { font-size: 3em; margin-bottom: 10px; }
+        .drop-zone .text { color: #8d6e63; font-size: 0.9em; }
+        .drop-zone .text strong { color: #e65100; }
+        .drop-zone input[type="file"] { display: none; }
+        .loading { text-align: center; padding: 20px; color: #ff9800; font-weight: 600; }
+        .loading::after { content: ''; animation: dots 1.5s infinite; }
+        @keyframes dots { 0% { content: '.'; } 33% { content: '..'; } 66% { content: '...'; } }
+        .or-divider { text-align: center; color: #bcaaa4; margin: 15px 0; font-size: 0.85em; position: relative; }
+        .or-divider::before, .or-divider::after { content: ''; position: absolute; top: 50%; width: 40%; height: 1px; background: #ffe0b2; }
+        .or-divider::before { left: 0; }
+        .or-divider::after { right: 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🛵 下午茶團購訂單</h1>
+        <p class="subtitle">拖放 Uber Eats 收據 PDF → 自動解析打勾清單 → Firebase 即時同步</p>
+
+        <div class="tab-bar">
+            <button class="tab-btn active" onclick="switchTab('current')">📋 目前訂單</button>
+            <button class="tab-btn" onclick="switchTab('create')">➕ 新增訂單</button>
+            <button class="tab-btn" onclick="switchTab('history')">📁 歷史訂單</button>
+        </div>
+
+        <!-- Create Order Tab -->
+        <div id="tabCreate" class="card" style="display:none;">
+            <h3>📝 匯入 Uber Eats 收據</h3>
+
+            <!-- PDF Drop Zone -->
+            <div class="drop-zone" id="dropZone" onclick="document.getElementById('pdfInput').click()">
+                <div class="icon">📄</div>
+                <div class="text">
+                    <strong>拖放 PDF 到這裡</strong>，或點擊選擇檔案<br>
+                    <span style="font-size:0.8em;">支援 Uber Eats 收據 PDF</span>
+                </div>
+                <input type="file" id="pdfInput" accept=".pdf" onchange="handleFileSelect(event)">
+            </div>
+            <div id="loadingIndicator" class="loading" style="display:none;">正在解析 PDF</div>
+
+            <div class="or-divider">或 手動貼上文字</div>
+
+            <!-- Manual Text Input -->
+            <div class="form-group">
+                <label>訂單名稱（選填，PDF 會自動偵測店名）</label>
+                <input type="text" id="orderTitle" placeholder="例：7/1 MATEAS 團購（留空會自動從 PDF 取得）">
+            </div>
+            <div class="form-group">
+                <label>貼上收據文字</label>
+                <textarea id="orderText" placeholder="從 PDF 複製文字貼到這裡...&#10;&#10;系統會自動辨識人名、品項、金額"></textarea>
+            </div>
+            <button class="btn btn-primary" onclick="parseFromText()">🔍 解析文字並建立</button>
+            <div class="parse-hint">
+                💡 品項前綴「U_」會自動移除，同一人多筆會合併顯示<br>
+                💡 點擊名字可以修改，金額使用品項原價
+            </div>
+        </div>
+
+        <!-- Current Order Tab -->
+        <div id="tabCurrent" class="card">
+            <div id="currentOrderContent">
+                <div class="order-list-empty">
+                    <p style="font-size:2em;margin-bottom:10px;">📭</p>
+                    <p>目前沒有進行中的訂單</p>
+                    <p style="font-size:0.8em;margin-top:8px;">點「➕ 新增訂單」來建立</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- History Tab -->
+        <div id="tabHistory" class="card" style="display:none;">
+            <h3>📁 歷史訂單</h3>
+            <div id="historyList"><div class="order-list-empty"><p>還沒有歷史訂單</p></div></div>
+        </div>
+    </div>
+
+    <!-- Edit Name Modal -->
+    <div class="modal-overlay" id="editNameModal">
+        <div class="modal">
+            <h3>✏️ 修改名字</h3>
+            <input type="text" id="editNameInput" placeholder="輸入新名字">
+            <div class="modal-btns">
+                <button class="modal-btn cancel" onclick="closeModal()">取消</button>
+                <button class="modal-btn confirm" onclick="confirmEditName()">確認</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- History Detail Modal -->
+    <div class="modal-overlay" id="historyDetailModal">
+        <div class="modal" style="max-width:600px;max-height:85vh;overflow-y:auto;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                <div>
+                    <h3 style="margin:0;" id="historyDetailTitle"></h3>
+                    <span style="font-size:0.78em;color:#8d6e63;" id="historyDetailDate"></span>
+                </div>
+                <button class="modal-btn cancel" onclick="closeHistoryDetail()">✕ 關閉</button>
+            </div>
+            <div id="historyDetailList" style="border:1px solid #ffe0b2;border-radius:10px;margin-bottom:12px;max-height:50vh;overflow-y:auto;"></div>
+            <div id="historyDetailSummary" style="display:flex;gap:15px;flex-wrap:wrap;padding:10px 12px;background:#fff3e0;border-radius:10px;font-size:0.85em;"></div>
+        </div>
+    </div>
+
+    <!-- pdf.js library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+    <script>
+        // pdf.js worker
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAdPI9uvP2tAPAZabX1jlRHd0GftxkrcjI",
+            authDomain: "badminton-fund-4d4fd.firebaseapp.com",
+            databaseURL: "https://badminton-fund-4d4fd-default-rtdb.firebaseio.com",
+            projectId: "badminton-fund-4d4fd",
+            storageBucket: "badminton-fund-4d4fd.firebasestorage.app",
+            messagingSenderId: "638627108913",
+            appId: "1:638627108913:web:77c2c4050e69fbe49c9d10"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+        const ordersRef = db.ref('afternoon_tea_orders');
+
+        let state = { orders: [], history: [] };
+        let editingNameIndex = -1;
+        let activeOrderIdx = 0; // which order is currently being viewed
+
+        function init() {
+            ordersRef.on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                    state = data;
+                    if (!state.orders) state.orders = [];
+                    if (!state.history) state.history = [];
+                    // Migration: if old format has 'current', move it into orders
+                    if (state.current) {
+                        state.orders.unshift(state.current);
+                        delete state.current;
+                        save();
+                        return;
+                    }
+                }
+                render();
+            });
+            setupDropZone();
+        }
+
+        function save() { ordersRef.set(state); }
+
+        function switchTab(tab) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById('tabCreate').style.display = 'none';
+            document.getElementById('tabCurrent').style.display = 'none';
+            document.getElementById('tabHistory').style.display = 'none';
+            if (tab === 'create') { document.querySelectorAll('.tab-btn')[1].classList.add('active'); document.getElementById('tabCreate').style.display = 'block'; }
+            else if (tab === 'current') { document.querySelectorAll('.tab-btn')[0].classList.add('active'); document.getElementById('tabCurrent').style.display = 'block'; }
+            else { document.querySelectorAll('.tab-btn')[2].classList.add('active'); document.getElementById('tabHistory').style.display = 'block'; }
+        }
+
+        // ===== PDF Drop Zone =====
+        function setupDropZone() {
+            const dropZone = document.getElementById('dropZone');
+            dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+            dropZone.addEventListener('dragleave', () => { dropZone.classList.remove('dragover'); });
+            dropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropZone.classList.remove('dragover');
+                const file = e.dataTransfer.files[0];
+                if (file && file.type === 'application/pdf') { processPDF(file); }
+                else { alert('請拖放 PDF 檔案'); }
+            });
+        }
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file && file.type === 'application/pdf') { processPDF(file); }
+            else { alert('請選擇 PDF 檔案'); }
+            event.target.value = '';
+        }
+
+        async function processPDF(file) {
+            const loading = document.getElementById('loadingIndicator');
+            loading.style.display = 'block';
+
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                let fullText = '';
+
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const textContent = await page.getTextContent();
+                    // Rebuild lines based on Y position
+                    const items = textContent.items.filter(item => item.str.trim() !== '');
+                    if (items.length === 0) continue;
+
+                    // Group items by Y coordinate (same line if Y is close)
+                    let lines = [];
+                    let currentLine = { y: items[0].transform[5], texts: [] };
+
+                    for (const item of items) {
+                        const y = item.transform[5];
+                        // If Y difference is small (< 3), same line
+                        if (Math.abs(y - currentLine.y) < 3) {
+                            currentLine.texts.push(item.str);
+                        } else {
+                            lines.push(currentLine.texts.join(' '));
+                            currentLine = { y: y, texts: [item.str] };
+                        }
+                    }
+                    lines.push(currentLine.texts.join(' '));
+                    fullText += lines.join('\n') + '\n';
+                }
+
+                loading.style.display = 'none';
+                console.log('PDF extracted text:', fullText); // Debug
+
+                // Auto-detect title from PDF text
+                const titleFromPDF = extractTitle(fullText);
+                const manualTitle = document.getElementById('orderTitle').value.trim();
+                const finalTitle = manualTitle || titleFromPDF || file.name.replace('.pdf', '');
+
+                // Parse the receipt
+                const result = parseUberText(fullText);
+                if (result.items.length === 0) {
+                    alert('無法從 PDF 解析出訂單項目，請嘗試手動貼上文字');
+                    return;
+                }
+
+                const newOrder = {
+                    id: Date.now(),
+                    title: finalTitle,
+                    createdAt: new Date().toISOString(),
+                    fees: result.fees,
+                    items: result.items.map((p, idx) => ({
+                        id: Date.now() + idx,
+                        name: p.name,
+                        entries: p.entries,
+                        totalAmount: p.totalAmount,
+                        checked: false
+                    }))
+                };
+
+                if (!state.orders) state.orders = [];
+                state.orders.unshift(newOrder);
+                activeOrderIdx = 0;
+                save();
+                document.getElementById('orderTitle').value = '';
+                switchTab('current');
+
+            } catch (err) {
+                loading.style.display = 'none';
+                console.error(err);
+                alert('PDF 解析失敗：' + err.message);
+            }
+        }
+
+        function extractTitle(text) {
+            // Try to find store name from "以下是您在XXX訂購的電子明細"
+            const match = text.match(/以下是您在(.+?)訂購的電子明細/);
+            if (match) {
+                const today = new Date();
+                return `${today.getMonth()+1}/${today.getDate()} ${match[1].trim()}`;
+            }
+            return null;
+        }
+
+        // ===== Text Parsing =====
+        function parseFromText() {
+            const title = document.getElementById('orderTitle').value.trim();
+            const text = document.getElementById('orderText').value.trim();
+            if (!text) { alert('請貼上收據文字'); return; }
+
+            const finalTitle = title || extractTitle(text) || `訂單 ${new Date().toLocaleDateString()}`;
+            const result = parseUberText(text);
+
+            if (result.items.length === 0) { alert('無法解析任何訂單項目，請確認格式'); return; }
+
+            const newOrder = {
+                id: Date.now(),
+                title: finalTitle,
+                createdAt: new Date().toISOString(),
+                fees: result.fees,
+                items: result.items.map((p, idx) => ({
+                    id: Date.now() + idx,
+                    name: p.name,
+                    entries: p.entries,
+                    totalAmount: p.totalAmount,
+                    checked: false
+                }))
+            };
+
+            if (!state.orders) state.orders = [];
+            state.orders.unshift(newOrder);
+            activeOrderIdx = 0;
+            save();
+            document.getElementById('orderTitle').value = '';
+            document.getElementById('orderText').value = '';
+            switchTab('current');
+        }
+
+        // ===== Uber Eats Receipt Parser =====
+        function parseUberText(text) {
+            // Normalize: remove extra spaces within tokens that PDF extraction adds
+            // e.g. "U_ 香橙" -> "U_香橙", "( 您 )" -> "(您)", "$ 75.00" -> "$75.00"
+            let normalized = text
+                .replace(/\(\s*您\s*\)/g, '(您)')
+                .replace(/U_\s+/g, 'U_')
+                .replace(/\$\s+/g, '$')
+                .replace(/\(\s*\$/g, '($')
+                .replace(/\(\s*限冷飲\s*\)/g, '(限冷飲)')
+                .replace(/\(\s*如適用\s*\)/g, '(如適用)')
+                // Normalize sweetness: "1 分" -> "1分", "3 分" -> "3分"
+                .replace(/(\d)\s*分/g, '$1分');
+
+            const lines = normalized.split('\n').map(l => l.trim()).filter(l => l);
+            const items = [];
+            let currentName = null;
+            let parsingStarted = false;
+            let fees = { serviceFee: 0, memberReward: 0, deliveryFee: 0, deliveryDiscount: 0 };
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+
+                // After item section: extract fees
+                if (/餐點小計/.test(line)) {
+                    // Continue scanning for fees
+                    for (let j = i; j < lines.length; j++) {
+                        const fLine = lines[j];
+                        let fm;
+                        fm = fLine.match(/^服務費.*?\$(\d+(?:\.\d+)?)/);
+                        if (fm) { fees.serviceFee = parseFloat(fm[1]); continue; }
+                        fm = fLine.match(/^會員獎勵.*?-?\$(\d+(?:\.\d+)?)/);
+                        if (fm) { fees.memberReward = parseFloat(fm[1]); continue; }
+                        fm = fLine.match(/^外送費優惠.*?-?\$(\d+(?:\.\d+)?)/);
+                        if (fm) { fees.deliveryDiscount = parseFloat(fm[1]); continue; }
+                        fm = fLine.match(/^外送費.*?\$(\d+(?:\.\d+)?)/);
+                        if (fm) { fees.deliveryFee = parseFloat(fm[1]); continue; }
+                        if (/^款\s*項/.test(fLine) || /Apple Pay/.test(fLine)) break;
+                    }
+                    break;
+                }
+
+                // Detect start: "(您)" in line
+                if (!parsingStarted) {
+                    if (/\(您\)/.test(line)) {
+                        parsingStarted = true;
+                        currentName = line.replace(/\s*\(您\)\s*/, '').replace(/^\s+|\s+$/g, '');
+                    }
+                    continue;
+                }
+
+                // Skip lines that start with number + 分 (sweetness like "1分, 去冰")
+                if (/^\d+分/.test(line)) { continue; }
+
+                // Try multiple patterns to match item lines
+                // Pattern 1: "1 U_品項名 $75.00" (standard)
+                let m = line.match(/^(\d+)\s+(.+?)\s+\$(\d+(?:\.\d+)?)$/);
+                if (m) { addItem(items, currentName, m[1], m[2], m[3]); continue; }
+
+                // Pattern 2: "1 品項名 $75.00" (price anywhere in line)
+                m = line.match(/^(\d+)\s+(.+?)\s+\$(\d+(?:\.\d+)?)/);
+                if (m && m[2].length > 1 && !m[2].match(/^[\$\(]/) && !m[2].match(/^分/)) { addItem(items, currentName, m[1], m[2], m[3]); continue; }
+
+                // Pattern 3: "1U_品項名 $75.00" (no space after qty)
+                m = line.match(/^(\d+)(U_|[A-Za-z一-鿿])(.+?)\s+\$(\d+(?:\.\d+)?)/);
+                if (m) { addItem(items, currentName, m[1], m[2]+m[3], m[4]); continue; }
+
+                // Pattern 4: qty+item on this line, $price on next line
+                m = line.match(/^(\d+)\s+(.+?)$/);
+                if (m && !line.includes('$') && m[2].length > 1 && !isSkipLine(line) && !m[2].match(/^分/)) {
+                    const next = lines[i+1] || '';
+                    const pm = next.match(/^\$(\d+(?:\.\d+)?)/);
+                    if (pm) { addItem(items, currentName, m[1], m[2], pm[1]); i++; continue; }
+                }
+
+                // Skip "$XX" only lines
+                if (/^\$\d+/.test(line)) continue;
+
+                // Skip customization/addon lines
+                if (isSkipLine(line)) continue;
+
+                // If none matched, treat as person name
+                currentName = line.replace(/\s*\(您\)\s*/, '').trim();
+            }
+
+            return { items, fees };
+        }
+
+        function addItem(items, name, qtyStr, rawName, amountStr) {
+            const qty = parseInt(qtyStr);
+            let itemName = rawName.replace(/^U_\s*/, '').replace(/\s+/g, '').trim();
+            itemName = itemName.replace(/([a-zA-Z0-9])([一-鿿])/g, '$1 $2').replace(/([一-鿿])([a-zA-Z0-9])/g, '$1$2');
+            const amount = parseFloat(amountStr);
+            if (isNaN(amount) || amount <= 0) return;
+            if (qty > 1) itemName += ` ×${qty}`;
+
+            const hasPromo = /活動/.test(itemName);
+
+            let person = items.find(p => p.name === (name || '(未知)'));
+            if (!person) {
+                person = { name: name || '(未知)', entries: [], totalAmount: 0 };
+                items.push(person);
+            }
+            person.entries.push({ detail: itemName, amount, discount: 0, hasPromo });
+            person.totalAmount += amount;
+        }
+
+        function isSkipLine(line) {
+            if (/^(無糖|微糖|半糖|少糖|全糖)/i.test(line)) return true;
+            if (/^[1-5]\s*分\s*[,，]/i.test(line)) return true;
+            if (/^(微冰|少冰|去冰|完全去冰|固定冰量|固定甜度|溫|熱|冷)/i.test(line)) return true;
+            if (/^[LM]\s*[\(（,，]/i.test(line)) return true;
+            if (/^(杯|L|M)\s*[,，]/i.test(line)) return true;
+            if (/^[\(（]\s*\$/i.test(line)) return true;
+            if (/^(白玉珍珠|蒟蒻|粉條|茶王凍)/i.test(line)) return true;
+            if (/^杯\s*[\(（]/i.test(line)) return true;
+            if (/^(L|M)\s*$/i.test(line)) return true;
+            if (/^\d+\s*分\s*$/i.test(line)) return true;
+            if (/^L,\s/i.test(line)) return true;
+            if (/^M,\s/i.test(line)) return true;
+            if (/^蒟蒻/i.test(line)) return true;
+            return false;
+        }
+
+        // ===== Order Actions =====
+        function getActiveOrder() { return (state.orders || [])[activeOrderIdx] || null; }
+
+        function setDiscount(idx, value) {
+            const order = getActiveOrder();
+            if (!order) return;
+            const discount = parseInt(value) || 0;
+            const item = order.items[idx];
+            if (!item || !item.entries) return;
+            const promoEntries = item.entries.filter(e => e.hasPromo);
+            item.entries.forEach(e => e.discount = 0);
+            if (promoEntries.length > 0) {
+                promoEntries[0].discount = discount;
+            }
+            save();
+        }
+
+        function toggleCheck(idx) {
+            const order = getActiveOrder();
+            if (!order) return;
+            order.items[idx].checked = !order.items[idx].checked;
+            save();
+        }
+
+        function deleteItem(idx) {
+            const order = getActiveOrder();
+            if (!order) return;
+            if (!confirm('確定要刪除這筆？')) return;
+            order.items.splice(idx, 1);
+            save();
+        }
+
+        function showEditName(idx) {
+            editingNameIndex = idx;
+            const order = getActiveOrder();
+            if (!order) return;
+            document.getElementById('editNameInput').value = order.items[idx].name;
+            document.getElementById('editNameModal').classList.add('active');
+            document.getElementById('editNameInput').focus();
+        }
+
+        function confirmEditName() {
+            const newName = document.getElementById('editNameInput').value.trim();
+            if (!newName) { alert('名字不能為空'); return; }
+            const order = getActiveOrder();
+            if (!order) return;
+            order.items[editingNameIndex].name = newName;
+            save();
+            closeModal();
+        }
+
+        function closeModal() { document.getElementById('editNameModal').classList.remove('active'); }
+
+        function archiveOrder(oIdx) {
+            const idx = oIdx !== undefined ? oIdx : activeOrderIdx;
+            const order = state.orders[idx];
+            if (!order) return;
+            if (!confirm(`確定要封存「${order.title}」？`)) return;
+            if (!state.history) state.history = [];
+            order.archivedAt = new Date().toISOString();
+            state.history.unshift(order);
+            state.orders.splice(idx, 1);
+            if (activeOrderIdx >= state.orders.length) activeOrderIdx = Math.max(0, state.orders.length - 1);
+            save();
+        }
+
+        function deleteOrder(oIdx) {
+            const idx = oIdx !== undefined ? oIdx : activeOrderIdx;
+            const order = state.orders[idx];
+            if (!order) return;
+            if (!confirm(`確定要刪除「${order.title}」？無法復原。`)) return;
+            state.orders.splice(idx, 1);
+            if (activeOrderIdx >= state.orders.length) activeOrderIdx = Math.max(0, state.orders.length - 1);
+            save();
+        }
+
+        function selectOrder(idx) {
+            activeOrderIdx = idx;
+            render();
+        }
+
+        function addManualItem() {
+            const order = getActiveOrder();
+            if (!order) return;
+            const name = document.getElementById('manualName').value.trim();
+            const detail = document.getElementById('manualDetail').value.trim();
+            const amount = parseInt(document.getElementById('manualAmount').value);
+            if (!detail) { alert('請輸入品項'); return; }
+            if (!amount || amount <= 0) { alert('請輸入金額'); return; }
+            order.items.push({ id: Date.now(), name: name || '(未填)', entries: [{ detail, amount }], totalAmount: amount, checked: false });
+            save();
+            document.getElementById('manualName').value = '';
+            document.getElementById('manualDetail').value = '';
+            document.getElementById('manualAmount').value = '';
+        }
+
+        function viewHistory(idx) {
+            const order = state.history[idx];
+            if (!order) return;
+            const entries = order.items || [];
+            const total = entries.reduce((s, i) => s + (i.totalAmount || 0), 0);
+            const totalDisc = entries.reduce((s, item) => s + ((item.entries || []).reduce((ds, e) => ds + (e.discount || 0), 0)), 0);
+            const netTotal = total - totalDisc;
+            const collected = entries.filter(i => i.checked).reduce((s, item) => {
+                const disc = (item.entries || []).reduce((ds, e) => ds + (e.discount || 0), 0);
+                return s + item.totalAmount - disc;
+            }, 0);
+
+            let listHtml = entries.map(item => {
+                const ents = item.entries || [];
+                const disc = ents.reduce((ds, e) => ds + (e.discount || 0), 0);
+                const net = item.totalAmount - disc;
+                let detailStr = ents.map(e => esc(e.detail)).join(' + ');
+                let amtStr = disc > 0 ? `$${item.totalAmount} - $${disc} = $${net}` : `$${item.totalAmount}`;
+                if (ents.length > 1 && disc === 0) {
+                    amtStr = ents.map(e => '$' + e.amount).join('+') + ` = $${item.totalAmount}`;
+                }
+                return `<div style="display:flex;align-items:center;padding:8px 10px;border-bottom:1px solid #fff3e0;gap:10px;">
+                    <span style="font-size:1.1em;">${item.checked ? '✅' : '⬜'}</span>
+                    <span style="font-weight:600;color:#5d4037;min-width:60px;">${esc(item.name)}</span>
+                    <span style="flex:1;color:#8d6e63;font-size:0.85em;">${detailStr}</span>
+                    <span style="font-weight:bold;color:#e65100;white-space:nowrap;">${amtStr}</span>
+                </div>`;
+            }).join('');
+
+            const d = new Date(order.createdAt);
+            document.getElementById('historyDetailTitle').textContent = order.title;
+            document.getElementById('historyDetailDate').textContent = `${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`;
+            document.getElementById('historyDetailList').innerHTML = listHtml;
+            document.getElementById('historyDetailSummary').innerHTML = `
+                <span>品項小計：<strong>$${netTotal.toLocaleString()}</strong></span>
+                <span>已收：<strong style="color:#2e7d32;">$${collected.toLocaleString()}</strong></span>
+                <span>未收：<strong style="color:#c62828;">$${(netTotal - collected).toLocaleString()}</strong></span>
+                <span>進度：<strong>${entries.filter(i=>i.checked).length}/${entries.length}</strong></span>
+            `;
+            document.getElementById('historyDetailModal').classList.add('active');
+        }
+
+        function closeHistoryDetail() {
+            document.getElementById('historyDetailModal').classList.remove('active');
+        }
+
+        function deleteHistory(idx) {
+            if (!confirm('確定要刪除此歷史訂單？')) return;
+            state.history.splice(idx, 1);
+            save();
+        }
+
+        // ===== Item Ranking (left side - per order) =====
+        function renderItemRanking(order) {
+            if (!order || !order.items || order.items.length === 0) return '';
+
+            const countMap = {};
+            order.items.forEach(person => {
+                (person.entries || []).forEach(entry => {
+                    let name = entry.detail;
+                    let qty = 1;
+                    const qtyMatch = name.match(/\s*×(\d+)$/);
+                    if (qtyMatch) {
+                        qty = parseInt(qtyMatch[1]);
+                        name = name.replace(/\s*×\d+$/, '');
+                    }
+                    if (!countMap[name]) countMap[name] = 0;
+                    countMap[name] += qty;
+                });
+            });
+
+            const sorted = Object.entries(countMap).sort((a, b) => b[1] - a[1]);
+            if (sorted.length === 0) return '';
+
+            const medals = ['🥇', '🥈', '🥉'];
+            const rankHtml = sorted.slice(0, 5).map(([name, count], i) => {
+                const medal = i < 3 ? medals[i] : `<span style="color:#8d6e63;font-weight:600;">${i+1}.</span>`;
+                const barWidth = Math.max(10, (count / sorted[0][1]) * 100);
+                return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                    <span style="width:24px;text-align:center;font-size:0.9em;">${medal}</span>
+                    <span style="flex:1;font-size:0.82em;color:#5d4037;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(name)}</span>
+                    <div style="width:60px;height:12px;background:#fff3e0;border-radius:6px;overflow:hidden;flex-shrink:0;">
+                        <div style="width:${barWidth}%;height:100%;background:linear-gradient(90deg,#ffcc80,#ff9800);border-radius:6px;"></div>
+                    </div>
+                    <span style="font-size:0.78em;color:#e65100;font-weight:600;min-width:28px;text-align:right;">${count}杯</span>
+                </div>`;
+            }).join('');
+
+            return `
+                <div style="flex:1;min-width:250px;padding:15px;background:#fff;border:2px solid #ffe0b2;border-radius:12px;">
+                    <h4 style="color:#e65100;margin-bottom:10px;font-size:0.85em;">🏆 本次熱門品項 TOP5</h4>
+                    ${rankHtml}
+                </div>`;
+        }
+
+        // ===== Store Order Count (right side - across all orders) =====
+        function renderStoreCount() {
+            // Count how many times each store was ordered (from all orders + history)
+            const storeMap = {};
+            const allOrders = [...(state.orders || []), ...(state.history || [])];
+            allOrders.forEach(order => {
+                if (!order || !order.title) return;
+                // Extract store name from title (format: "M/D 店名" or just "店名")
+                let storeName = order.title.replace(/^\d+\/\d+\s*/, '').trim();
+                if (!storeName) storeName = order.title;
+                if (!storeMap[storeName]) storeMap[storeName] = 0;
+                storeMap[storeName]++;
+            });
+
+            const sorted = Object.entries(storeMap).sort((a, b) => b[1] - a[1]);
+            if (sorted.length === 0) return '';
+
+            const storeHtml = sorted.map(([name, count]) => {
+                return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #fff3e0;">
+                    <span style="font-size:0.82em;color:#5d4037;">${esc(name)}</span>
+                    <span style="font-size:0.82em;color:#e65100;font-weight:600;">${count} 次</span>
+                </div>`;
+            }).join('');
+
+            return `
+                <div style="flex:1;min-width:200px;padding:15px;background:#fff;border:2px solid #ffe0b2;border-radius:12px;">
+                    <h4 style="color:#e65100;margin-bottom:10px;font-size:0.85em;">🏪 店家訂購次數</h4>
+                    ${storeHtml}
+                </div>`;
+        }
+
+        // ===== Rendering =====
+        function render() { renderCurrent(); renderHistory(); }
+
+        function renderCurrent() {
+            const el = document.getElementById('currentOrderContent');
+            if (!state.orders || state.orders.length === 0) {
+                el.innerHTML = '<div class="order-list-empty"><p style="font-size:2em;margin-bottom:10px;">📭</p><p>目前沒有進行中的訂單</p><p style="font-size:0.8em;margin-top:8px;">點「➕ 新增訂單」來建立</p></div>';
+                return;
+            }
+
+            if (activeOrderIdx >= state.orders.length) activeOrderIdx = 0;
+            const order = state.orders[activeOrderIdx];
+            if (!order || !order.items) return;
+
+            // Order tabs (if multiple orders)
+            let orderTabsHtml = '';
+            if (state.orders.length > 1) {
+                orderTabsHtml = `<div style="display:flex;gap:6px;margin-bottom:15px;flex-wrap:wrap;overflow-x:auto;">` +
+                    state.orders.map((o, i) => `<button onclick="selectOrder(${i})" style="padding:6px 12px;border-radius:8px;border:${i===activeOrderIdx?'2px solid #ff9800':'1px solid #ffe0b2'};background:${i===activeOrderIdx?'#fff3e0':'#fff'};color:${i===activeOrderIdx?'#e65100':'#8d6e63'};font-size:0.78em;cursor:pointer;white-space:nowrap;">${esc(o.title)}</button>`).join('') +
+                    `</div>`;
+            }
+            const total = order.items.reduce((s, i) => s + i.totalAmount, 0);
+            const collected = order.items.filter(i => i.checked).reduce((s, i) => s + i.totalAmount, 0);
+            const uncollected = total - collected;
+            const checkedCount = order.items.filter(i => i.checked).length;
+
+            let html = orderTabsHtml + `
+                <div class="order-header">
+                    <h3>📋 ${esc(order.title)}</h3>
+                    <div style="display:flex;gap:8px;">
+                        <button class="btn btn-success btn-sm" onclick="archiveOrder()">✓ 封存</button>
+                        <button class="btn btn-danger btn-sm" onclick="deleteOrder()">🗑 刪除</button>
+                    </div>
+                </div>
+                <div class="manual-add">
+                    <input type="text" id="manualName" placeholder="名字" style="width:80px;">
+                    <input type="text" id="manualDetail" placeholder="品項" style="flex:1;min-width:100px;">
+                    <input type="number" id="manualAmount" placeholder="金額" style="width:70px;">
+                    <button class="btn btn-primary btn-sm" onclick="addManualItem()">+ 手動新增</button>
+                </div>
+            `;
+
+            html += order.items.map((item, idx) => {
+                let detailHtml = '';
+                let amountHtml = '';
+                const entries = item.entries || [];
+                const totalDiscount = entries.reduce((s, e) => s + (e.discount || 0), 0);
+                const netAmount = item.totalAmount - totalDiscount;
+                const hasAnyPromo = entries.some(e => e.hasPromo);
+
+                if (entries.length > 1) {
+                    detailHtml = entries.map(e => esc(e.detail)).join(' + ');
+                    const breakdown = entries.map(e => '$' + e.amount).join(' + ');
+                    if (totalDiscount > 0) {
+                        amountHtml = `<span class="subtotal">${breakdown}</span><strong>$${item.totalAmount} - $${totalDiscount} = $${netAmount}</strong>`;
+                    } else {
+                        amountHtml = `<span class="subtotal">${breakdown}</span><strong>= $${item.totalAmount}</strong>`;
+                    }
+                } else if (entries.length === 1) {
+                    detailHtml = esc(entries[0].detail);
+                    if (totalDiscount > 0) {
+                        amountHtml = `<strong>$${item.totalAmount} - $${totalDiscount} = $${netAmount}</strong>`;
+                    } else {
+                        amountHtml = `<strong>$${item.totalAmount}</strong>`;
+                    }
+                } else {
+                    detailHtml = '(無品項)';
+                    amountHtml = `<strong>$${item.totalAmount || 0}</strong>`;
+                }
+
+                // Discount input for promo items
+                let discountHtml = '';
+                if (hasAnyPromo) {
+                    discountHtml = `<input type="number" min="0" value="${totalDiscount || ''}" placeholder="折扣" style="width:55px;padding:4px 6px;border:1px solid #ffcc80;border-radius:6px;font-size:0.75em;background:#fff8e1;text-align:center;" onchange="setDiscount(${idx}, this.value)" title="輸入此人的活動折扣金額">`;
+                }
+
+                return `
+                <div class="order-item ${item.checked ? 'checked' : ''}">
+                    <div class="checkbox ${item.checked ? 'checked' : ''}" onclick="toggleCheck(${idx})"></div>
+                    <span class="item-name" onclick="showEditName(${idx})" title="點擊修改名字">${esc(item.name)}</span>
+                    <span class="item-detail">${detailHtml}</span>
+                    ${discountHtml}
+                    <span class="item-amount">${amountHtml}</span>
+                    <span class="item-delete" onclick="deleteItem(${idx})">✕</span>
+                </div>`;
+            }).join('');
+
+            // Calculate net amounts (after discounts)
+            const totalDiscounts = order.items.reduce((s, item) => s + (item.entries || []).reduce((ds, e) => ds + (e.discount || 0), 0), 0);
+            const netTotal = total - totalDiscounts;
+            const collectedNet = order.items.filter(i => i.checked).reduce((s, item) => {
+                const disc = (item.entries || []).reduce((ds, e) => ds + (e.discount || 0), 0);
+                return s + item.totalAmount - disc;
+            }, 0);
+
+            // Calculate fees
+            const fees = order.fees || { serviceFee: 0, memberReward: 0, deliveryFee: 0, deliveryDiscount: 0 };
+            const extraServiceFee = Math.max(0, fees.serviceFee - fees.memberReward);
+            const netDeliveryFee = Math.max(0, fees.deliveryFee - fees.deliveryDiscount);
+            const grandTotal = netTotal + extraServiceFee + netDeliveryFee;
+
+            html += `
+                <div class="summary">
+                    <div class="summary-item"><div class="label">品項小計</div><div class="value" style="color:#5d4037;">$${netTotal.toLocaleString()}</div></div>
+                    ${totalDiscounts > 0 ? `<div class="summary-item"><div class="label">活動折扣</div><div class="value" style="color:#43a047;">-$${totalDiscounts}</div></div>` : ''}
+                    ${extraServiceFee > 0 ? `<div class="summary-item"><div class="label">額外服務費</div><div class="value" style="color:#8d6e63;">+$${extraServiceFee}</div></div>` : ''}
+                    ${netDeliveryFee > 0 ? `<div class="summary-item"><div class="label">外送費</div><div class="value" style="color:#8d6e63;">+$${netDeliveryFee}</div></div>` : ''}
+                    <div class="summary-item"><div class="label">應收總計</div><div class="value total">$${grandTotal.toLocaleString()}</div></div>
+                    <div class="summary-item"><div class="label">已收款</div><div class="value collected">$${collectedNet.toLocaleString()}</div></div>
+                    <div class="summary-item"><div class="label">未收款</div><div class="value uncollected">$${(grandTotal - collectedNet).toLocaleString()}</div></div>
+                    <div class="summary-item"><div class="label">進度</div><div class="value">${checkedCount} / ${order.items.length}</div></div>
+                </div>`;
+
+            // Item popularity ranking + store order count
+            html += `<div style="display:flex;gap:15px;margin-top:15px;flex-wrap:wrap;">`;
+            html += renderItemRanking(order);
+            html += renderStoreCount();
+            html += `</div>`;
+
+            el.innerHTML = html;
+        }
+
+        function renderHistory() {
+            const el = document.getElementById('historyList');
+            if (!state.history || state.history.length === 0) {
+                el.innerHTML = '<div class="order-list-empty"><p>還沒有歷史訂單</p></div>';
+                return;
+            }
+            el.innerHTML = state.history.map((h, idx) => {
+                const d = new Date(h.createdAt);
+                const total = (h.items || []).reduce((s, i) => s + (i.totalAmount || 0), 0);
+                return `<div class="history-item"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;"><div><div class="h-title">${esc(h.title)}</div><div class="h-meta">${d.getMonth()+1}/${d.getDate()} ｜ ${(h.items||[]).length} 人 ｜ 總計 $${total.toLocaleString()}</div></div><div style="display:flex;gap:6px;"><button class="btn btn-primary btn-sm" onclick="viewHistory(${idx})">📋 觀看明細</button><button class="btn btn-danger btn-sm" onclick="deleteHistory(${idx})">刪除</button></div></div></div>`;
+            }).join('');
+        }
+
+        function esc(str) { const d = document.createElement('div'); d.textContent = str || ''; return d.innerHTML; }
+
+        document.getElementById('editNameInput').addEventListener('keypress', e => { if (e.key === 'Enter') confirmEditName(); });
+
+        init();
+    </script>
+</body>
+</html>
