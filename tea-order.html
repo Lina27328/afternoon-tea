@@ -390,28 +390,41 @@
                 // Normalize sweetness: "1 分" -> "1分", "3 分" -> "3分"
                 .replace(/(\d)\s*分/g, '$1分');
 
+            // Split lines. Also handle case where "餐點小計金額 $439.00優先外送 $48.00" is glued together
+            // by inserting newline before common fee labels that appear after a $amount
+            normalized = normalized.replace(/(\$\d+(?:\.\d+)?)(優先外送|外送費優惠|外送費|服務費折扣|服務費|會員獎勵|款\s*項)/g, '$1\n$2');
             const lines = normalized.split('\n').map(l => l.trim()).filter(l => l);
             const items = [];
             let currentName = null;
             let parsingStarted = false;
-            let fees = { serviceFee: 0, memberReward: 0, deliveryFee: 0, deliveryDiscount: 0 };
+            let fees = { serviceFee: 0, serviceDiscount: 0, memberReward: 0, deliveryFee: 0, deliveryDiscount: 0, priorityDelivery: 0 };
 
             for (let i = 0; i < lines.length; i++) {
                 const line = lines[i];
 
                 // After item section: extract fees
                 if (/餐點小計/.test(line)) {
-                    // Continue scanning for fees
+                    // Continue scanning for fees. IMPORTANT: order matters - more specific patterns first!
                     for (let j = i; j < lines.length; j++) {
                         const fLine = lines[j];
                         let fm;
-                        fm = fLine.match(/^服務費.*?\$(\d+(?:\.\d+)?)/);
-                        if (fm) { fees.serviceFee = parseFloat(fm[1]); continue; }
+                        // Priority delivery fee (優先外送)
+                        fm = fLine.match(/^優先外送.*?\$(\d+(?:\.\d+)?)/);
+                        if (fm) { fees.priorityDelivery = parseFloat(fm[1]); continue; }
+                        // Service fee discount (服務費折扣) - must match BEFORE 服務費
+                        fm = fLine.match(/^服務費折扣.*?-?\$(\d+(?:\.\d+)?)/);
+                        if (fm) { fees.serviceDiscount = parseFloat(fm[1]); continue; }
+                        // Member reward (會員獎勵)
                         fm = fLine.match(/^會員獎勵.*?-?\$(\d+(?:\.\d+)?)/);
                         if (fm) { fees.memberReward = parseFloat(fm[1]); continue; }
+                        // Service fee (服務費) - must match AFTER 服務費折扣
+                        fm = fLine.match(/^服務費(?!折扣).*?\$(\d+(?:\.\d+)?)/);
+                        if (fm) { fees.serviceFee = parseFloat(fm[1]); continue; }
+                        // Delivery discount (外送費優惠) - must match BEFORE 外送費
                         fm = fLine.match(/^外送費優惠.*?-?\$(\d+(?:\.\d+)?)/);
                         if (fm) { fees.deliveryDiscount = parseFloat(fm[1]); continue; }
-                        fm = fLine.match(/^外送費.*?\$(\d+(?:\.\d+)?)/);
+                        // Delivery fee (外送費) - must match AFTER 外送費優惠
+                        fm = fLine.match(/^外送費(?!優惠).*?\$(\d+(?:\.\d+)?)/);
                         if (fm) { fees.deliveryFee = parseFloat(fm[1]); continue; }
                         if (/^款\s*項/.test(fLine) || /Apple Pay/.test(fLine)) break;
                     }
@@ -818,9 +831,11 @@
             }, 0);
 
             // Calculate fees
-            const fees = order.fees || { serviceFee: 0, memberReward: 0, deliveryFee: 0, deliveryDiscount: 0 };
-            const extraServiceFee = Math.max(0, fees.serviceFee - fees.memberReward);
-            const netDeliveryFee = Math.max(0, fees.deliveryFee - fees.deliveryDiscount);
+            // 額外服務費 = 服務費 - 會員獎勵 - 服務費折扣 + 優先外送費
+            // 外送費 = 外送費 - 外送費優惠（互抵則為 0）
+            const fees = order.fees || { serviceFee: 0, serviceDiscount: 0, memberReward: 0, deliveryFee: 0, deliveryDiscount: 0, priorityDelivery: 0 };
+            const extraServiceFee = Math.max(0, (fees.serviceFee || 0) - (fees.memberReward || 0) - (fees.serviceDiscount || 0) + (fees.priorityDelivery || 0));
+            const netDeliveryFee = Math.max(0, (fees.deliveryFee || 0) - (fees.deliveryDiscount || 0));
             const grandTotal = netTotal + extraServiceFee + netDeliveryFee;
 
             html += `
