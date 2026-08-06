@@ -304,9 +304,11 @@
                     return;
                 }
 
+                const owner = extractOwner(fullText);
                 const newOrder = {
                     id: Date.now(),
                     title: finalTitle,
+                    owner: owner || '',
                     createdAt: new Date().toISOString(),
                     fees: result.fees,
                     items: result.items.map((p, idx) => ({
@@ -335,9 +337,39 @@
         function extractTitle(text) {
             // Try to find store name from "以下是您在XXX訂購的電子明細"
             const match = text.match(/以下是您在(.+?)訂購的電子明細/);
-            if (match) {
+            if (!match) return null;
+            const storeName = match[1].trim();
+            // Try to extract order date from PDF (e.g. "2026 年 5 月 27 日")
+            const dateMatch = text.match(/(\d{4})\s*年\s*(\d+)\s*月\s*(\d+)\s*日/);
+            let month, day;
+            if (dateMatch) {
+                month = parseInt(dateMatch[2]);
+                day = parseInt(dateMatch[3]);
+            } else {
                 const today = new Date();
-                return `${today.getMonth()+1}/${today.getDate()} ${match[1].trim()}`;
+                month = today.getMonth() + 1;
+                day = today.getDate();
+            }
+            return `${month}/${day} ${storeName}`;
+        }
+
+        function extractOwner(text) {
+            // Try to find order owner from "XXX，感謝您的訂單" (single line)
+            let m = text.match(/([^\s，、\n]+)\s*，\s*感謝您的訂單/);
+            if (m) return m[1].trim();
+            // Fallback: find "，感謝您的訂單" line, then look up previous non-empty non-date line
+            const lines = text.split('\n').map(l => l.trim());
+            for (let i = 0; i < lines.length; i++) {
+                if (/^，?\s*感謝您的訂單/.test(lines[i])) {
+                    for (let j = i - 1; j >= 0; j--) {
+                        const prev = lines[j];
+                        if (!prev) continue;
+                        if (/^\d{4}\s*年/.test(prev)) continue;
+                        if (/^(上午|下午)\s*\d+/.test(prev)) continue;
+                        if (/^\d+[:：]\d+/.test(prev)) continue;
+                        return prev;
+                    }
+                }
             }
             return null;
         }
@@ -353,9 +385,11 @@
 
             if (result.items.length === 0) { alert('無法解析任何訂單項目，請確認格式'); return; }
 
+            const owner = extractOwner(text);
             const newOrder = {
                 id: Date.now(),
                 title: finalTitle,
+                owner: owner || '',
                 createdAt: new Date().toISOString(),
                 fees: result.fees,
                 items: result.items.map((p, idx) => ({
@@ -392,12 +426,15 @@
 
             // Split lines. Also handle case where "餐點小計金額 $439.00優先外送 $48.00" is glued together
             // by inserting newline before common fee labels that appear after a $amount
-            normalized = normalized.replace(/(\$\d+(?:\.\d+)?)(優先外送|外送費優惠|外送費|服務費折扣|服務費|會員獎勵|款\s*項)/g, '$1\n$2');
+            normalized = normalized.replace(/(\$[\d,]+(?:\.\d+)?)(優先外送|外送費優惠|外送費|服務費折扣|服務費|會員獎勵|優惠(?![券碼])|款\s*項)/g, '$1\n$2');
             const lines = normalized.split('\n').map(l => l.trim()).filter(l => l);
             const items = [];
             let currentName = null;
             let parsingStarted = false;
-            let fees = { serviceFee: 0, serviceDiscount: 0, memberReward: 0, deliveryFee: 0, deliveryDiscount: 0, priorityDelivery: 0 };
+            let fees = { serviceFee: 0, serviceDiscount: 0, memberReward: 0, deliveryFee: 0, deliveryDiscount: 0, priorityDelivery: 0, promoDiscount: 0 };
+
+            // Helper: remove thousand separators from a matched amount
+            const parseAmt = s => parseFloat(String(s).replace(/,/g, ''));
 
             for (let i = 0; i < lines.length; i++) {
                 const line = lines[i];
@@ -409,23 +446,26 @@
                         const fLine = lines[j];
                         let fm;
                         // Priority delivery fee (優先外送)
-                        fm = fLine.match(/^優先外送.*?\$(\d+(?:\.\d+)?)/);
-                        if (fm) { fees.priorityDelivery = parseFloat(fm[1]); continue; }
+                        fm = fLine.match(/^優先外送.*?\$([\d,]+(?:\.\d+)?)/);
+                        if (fm) { fees.priorityDelivery = parseAmt(fm[1]); continue; }
                         // Service fee discount (服務費折扣) - must match BEFORE 服務費
-                        fm = fLine.match(/^服務費折扣.*?-?\$(\d+(?:\.\d+)?)/);
-                        if (fm) { fees.serviceDiscount = parseFloat(fm[1]); continue; }
+                        fm = fLine.match(/^服務費折扣.*?-?\$([\d,]+(?:\.\d+)?)/);
+                        if (fm) { fees.serviceDiscount = parseAmt(fm[1]); continue; }
                         // Member reward (會員獎勵)
-                        fm = fLine.match(/^會員獎勵.*?-?\$(\d+(?:\.\d+)?)/);
-                        if (fm) { fees.memberReward = parseFloat(fm[1]); continue; }
+                        fm = fLine.match(/^會員獎勵.*?-?\$([\d,]+(?:\.\d+)?)/);
+                        if (fm) { fees.memberReward = parseAmt(fm[1]); continue; }
                         // Service fee (服務費) - must match AFTER 服務費折扣
-                        fm = fLine.match(/^服務費(?!折扣).*?\$(\d+(?:\.\d+)?)/);
-                        if (fm) { fees.serviceFee = parseFloat(fm[1]); continue; }
+                        fm = fLine.match(/^服務費(?!折扣).*?\$([\d,]+(?:\.\d+)?)/);
+                        if (fm) { fees.serviceFee = parseAmt(fm[1]); continue; }
                         // Delivery discount (外送費優惠) - must match BEFORE 外送費
-                        fm = fLine.match(/^外送費優惠.*?-?\$(\d+(?:\.\d+)?)/);
-                        if (fm) { fees.deliveryDiscount = parseFloat(fm[1]); continue; }
+                        fm = fLine.match(/^外送費優惠.*?-?\$([\d,]+(?:\.\d+)?)/);
+                        if (fm) { fees.deliveryDiscount = parseAmt(fm[1]); continue; }
                         // Delivery fee (外送費) - must match AFTER 外送費優惠
-                        fm = fLine.match(/^外送費(?!優惠).*?\$(\d+(?:\.\d+)?)/);
-                        if (fm) { fees.deliveryFee = parseFloat(fm[1]); continue; }
+                        fm = fLine.match(/^外送費(?!優惠).*?\$([\d,]+(?:\.\d+)?)/);
+                        if (fm) { fees.deliveryFee = parseAmt(fm[1]); continue; }
+                        // Promo discount (優惠) - overall Uber One discount
+                        fm = fLine.match(/^優惠(?![券碼]).*?-?\$([\d,]+(?:\.\d+)?)/);
+                        if (fm) { fees.promoDiscount = parseAmt(fm[1]); continue; }
                         if (/^款\s*項/.test(fLine) || /Apple Pay/.test(fLine)) break;
                     }
                     break;
@@ -761,9 +801,10 @@
             const uncollected = total - collected;
             const checkedCount = order.items.filter(i => i.checked).length;
 
+            const ownerBadge = order.owner ? `<span style="font-size:0.65em;background:#fff3e0;color:#e65100;padding:3px 10px;border-radius:12px;margin-left:8px;font-weight:600;vertical-align:middle;">👑 團主 - ${esc(order.owner)}</span>` : '';
             let html = orderTabsHtml + `
                 <div class="order-header">
-                    <h3>📋 ${esc(order.title)}</h3>
+                    <h3>📋 ${esc(order.title)}${ownerBadge}</h3>
                     <div style="display:flex;gap:8px;">
                         <button class="btn btn-success btn-sm" onclick="archiveOrder()">✓ 封存</button>
                         <button class="btn btn-danger btn-sm" onclick="deleteOrder()">🗑 刪除</button>
@@ -823,8 +864,10 @@
             }).join('');
 
             // Calculate net amounts (after discounts)
+            // totalDiscounts = 使用者手動輸入的活動折扣總和
             const totalDiscounts = order.items.reduce((s, item) => s + (item.entries || []).reduce((ds, e) => ds + (e.discount || 0), 0), 0);
-            const netTotal = total - totalDiscounts;
+            // 品項小計 = 原始金額（不扣折扣，維持真實價格）
+            const itemSubtotal = total;
             const collectedNet = order.items.filter(i => i.checked).reduce((s, item) => {
                 const disc = (item.entries || []).reduce((ds, e) => ds + (e.discount || 0), 0);
                 return s + item.totalAmount - disc;
@@ -833,15 +876,18 @@
             // Calculate fees
             // 額外服務費 = 服務費 - 會員獎勵 - 服務費折扣 + 優先外送費
             // 外送費 = 外送費 - 外送費優惠（互抵則為 0）
-            const fees = order.fees || { serviceFee: 0, serviceDiscount: 0, memberReward: 0, deliveryFee: 0, deliveryDiscount: 0, priorityDelivery: 0 };
+            // promoDiscount = PDF 中的「優惠」欄位（整單活動折扣）
+            const fees = order.fees || { serviceFee: 0, serviceDiscount: 0, memberReward: 0, deliveryFee: 0, deliveryDiscount: 0, priorityDelivery: 0, promoDiscount: 0 };
             const extraServiceFee = Math.max(0, (fees.serviceFee || 0) - (fees.memberReward || 0) - (fees.serviceDiscount || 0) + (fees.priorityDelivery || 0));
             const netDeliveryFee = Math.max(0, (fees.deliveryFee || 0) - (fees.deliveryDiscount || 0));
-            const grandTotal = netTotal + extraServiceFee + netDeliveryFee;
+            const promoDiscount = fees.promoDiscount || 0;
+            // 應收總計 = 品項小計 - PDF活動折扣 + 額外服務費 + 外送費
+            const grandTotal = itemSubtotal - promoDiscount + extraServiceFee + netDeliveryFee;
 
             html += `
                 <div class="summary">
-                    <div class="summary-item"><div class="label">品項小計</div><div class="value" style="color:#5d4037;">$${netTotal.toLocaleString()}</div></div>
-                    ${totalDiscounts > 0 ? `<div class="summary-item"><div class="label">活動折扣</div><div class="value" style="color:#43a047;">-$${totalDiscounts}</div></div>` : ''}
+                    <div class="summary-item"><div class="label">品項小計</div><div class="value" style="color:#5d4037;">$${itemSubtotal.toLocaleString()}</div></div>
+                    ${promoDiscount > 0 ? `<div class="summary-item"><div class="label">活動折扣</div><div class="value" style="color:#43a047;">-$${promoDiscount.toLocaleString()}</div>${totalDiscounts > 0 ? `<div style="font-size:0.7em;color:#8d6e63;margin-top:2px;">已分配 -$${totalDiscounts}</div>` : ''}</div>` : (totalDiscounts > 0 ? `<div class="summary-item"><div class="label">活動折扣</div><div class="value" style="color:#43a047;">-$${totalDiscounts}</div></div>` : '')}
                     ${extraServiceFee > 0 ? `<div class="summary-item"><div class="label">額外服務費</div><div class="value" style="color:#8d6e63;">+$${extraServiceFee}</div></div>` : ''}
                     ${netDeliveryFee > 0 ? `<div class="summary-item"><div class="label">外送費</div><div class="value" style="color:#8d6e63;">+$${netDeliveryFee}</div></div>` : ''}
                     <div class="summary-item"><div class="label">應收總計</div><div class="value total">$${grandTotal.toLocaleString()}</div></div>
