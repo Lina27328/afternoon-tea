@@ -197,6 +197,41 @@
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
         const ordersRef = db.ref('afternoon_tea_orders');
+        const fundRef = db.ref('afternoon_tea');
+
+        // 自動為訂單建立「服務費支出」待確認交易；同一訂單只會建立一次
+        function autoCreateServiceFeeExpense(order) {
+            const fees = order.fees || {};
+            const extraServiceFee = Math.max(0, (fees.serviceFee || 0) - (fees.memberReward || 0) - (fees.serviceDiscount || 0) + (fees.priorityDelivery || 0));
+            if (extraServiceFee <= 0) return;
+            if (!order.owner) return; // 沒團主資訊就不自動建立
+            fundRef.once('value').then(snap => {
+                const fundState = snap.val() || { balance: 0, members: [], pending: [], transactions: [], wishes: [] };
+                if (!Array.isArray(fundState.pending)) fundState.pending = [];
+                if (!Array.isArray(fundState.transactions)) fundState.transactions = [];
+                // 檢查是否已有此訂單建立過的交易（用 orderId 標記）
+                const dup = [...fundState.pending, ...fundState.transactions].some(t => t.orderId === order.id);
+                if (dup) return;
+                // 從標題抓日期（例：5/27 xxx飲料店）
+                const dateMatch = (order.title || '').match(/^(\d{1,2}\/\d{1,2})/);
+                const dateStr = dateMatch ? dateMatch[1] : '';
+                const storeName = (order.title || '').replace(/^\d{1,2}\/\d{1,2}\s*/, '').trim() || order.title || '訂單';
+                const description = dateStr ? `${dateStr} ${storeName} 服務費` : `${storeName} 服務費`;
+                fundState.pending.unshift({
+                    id: Date.now(),
+                    orderId: order.id,
+                    type: 'expense',
+                    person: order.owner,
+                    amount: extraServiceFee,
+                    account: '(自動生成)',
+                    description: description,
+                    note: `PDF 訂單自動建立 - 團主：${order.owner}`,
+                    submitTime: new Date().toISOString(),
+                    status: 'pending'
+                });
+                fundRef.set(fundState);
+            });
+        }
 
         let state = { orders: [], history: [] };
         let editingNameIndex = -1;
@@ -324,6 +359,7 @@
                 state.orders.unshift(newOrder);
                 activeOrderIdx = 0;
                 save();
+                autoCreateServiceFeeExpense(newOrder);
                 document.getElementById('orderTitle').value = '';
                 switchTab('current');
 
@@ -354,24 +390,145 @@
         }
 
         function extractOwner(text) {
-            // Try to find order owner from "XXX，感謝您的訂單" (single line)
-            let m = text.match(/([^\s，、\n]+)\s*，\s*感謝您的訂單/);
-            if (m) return m[1].trim();
-            // Fallback: find "，感謝您的訂單" line, then look up previous non-empty non-date line
-            const lines = text.split('\n').map(l => l.trim());
-            for (let i = 0; i < lines.length; i++) {
-                if (/^，?\s*感謝您的訂單/.test(lines[i])) {
-                    for (let j = i - 1; j >= 0; j--) {
-                        const prev = lines[j];
-                        if (!prev) continue;
-                        if (/^\d{4}\s*年/.test(prev)) continue;
-                        if (/^(上午|下午)\s*\d+/.test(prev)) continue;
-                        if (/^\d+[:：]\d+/.test(prev)) continue;
-                        return prev;
-                    }
+            console.log('[extractOwner] 開始搜尋團主...');
+
+            // 關鍵：pdf.js 會把中文字之間插入空白（例如「瀅 驊 ， 感 謝 您 的 訂 單」）
+            // 先把「中文字之間的單一空白」移除，讓文字回歸正常
+            const cleaned = text.replace(/([一-龥])\s+([一-龥])/g, '$1$2')
+                                 .replace(/([一-龥])\s+([一-龥])/g, '$1$2')  // 再跑一次處理相鄰
+                                 .replace(/([一-龥])\s+([一-龥])/g, '$1$2'); // 再一次確保完整
+            console.log('[extractOwner] 清理後前 300 字:', cleaned.substring(0, 300));
+
+            // 方法 A：從「XXX (您)」抓取 — 只抓 (您) 前緊鄰的最後一段連續名字（不含空白）
+            const youMatch = cleaned.match(/([一-龥A-Za-z0-9_]{1,20})\s*[\(（]\s*您\s*[\)）]/);
+            if (youMatch) {
+                const name = youMatch[1].trim();
+                if (isValidName(name)) {
+                    console.log('[extractOwner] 方法A（(您)標記）成功:', name);
+                    return name;
                 }
             }
+
+            // 方法 B：從「XXX ，感謝您的訂單」抓取 — 只抓逗號前緊鄰的最後一段連續名字
+            const thanksMatch = cleaned.match(/([一-龥A-Za-z0-9_]{1,20})\s*[，,]\s*感謝您的訂單/);
+            if (thanksMatch) {
+                const name = thanksMatch[1].trim();
+                if (isValidName(name)) {
+                    console.log('[extractOwner] 方法B（感謝您的訂單）成功:', name);
+                    return name;
+                }
+            }
+
+            // 方法 C：直接位置匹配
+            const idx = cleaned.indexOf('感謝您的訂單');
+            console.log('[extractOwner] 「感謝您的訂單」位置:', idx);
+            if (idx === -1) {
+                console.log('[extractOwner] 找不到「感謝您的訂單」');
+                return null;
+            }
+
+            // 沿用原本方法 1 之後的邏輯，但用 cleaned 版本
+            const text_bak = text;
+            text = cleaned;
+
+            // 取前 200 字元檢視上下文
+            const contextStart = Math.max(0, idx - 200);
+            const context = text.substring(contextStart, idx + 20);
+            console.log('[extractOwner] 「感謝您的訂單」附近文字:', JSON.stringify(context));
+
+            // 方法 1a：直接匹配「XXX ，感謝您的訂單」（允許中間有空白、換行、標點）
+            let m = text.match(/([一-龥A-Za-z][一-龥A-Za-z0-9_ ]{0,18}[一-龥A-Za-z0-9])[\s\n]*[，,、\s]*[\s\n]*感謝您的訂單/);
+            if (m) {
+                const name = m[1].trim();
+                if (isValidName(name)) {
+                    console.log('[extractOwner] 方法1a 成功:', name);
+                    return name;
+                }
+            }
+
+            // 方法 2：取「感謝您的訂單」前所有內容，往前找最後一段名字字元
+            let before = text.substring(0, idx);
+            // 去除尾端所有標點、空白、換行
+            before = before.replace(/[\s，,、。\.\n\r]+$/, '');
+            console.log('[extractOwner] 前段結尾100字元:', JSON.stringify(before.slice(-100)));
+
+            // 從尾端往前找一段連續的名字（中文/英文/數字/空格）
+            m = before.match(/([一-龥A-Za-z][一-龥A-Za-z0-9_ ]{0,18}[一-龥A-Za-z0-9])$/);
+            if (m) {
+                const name = m[1].trim();
+                if (isValidName(name)) {
+                    console.log('[extractOwner] 方法2 成功:', name);
+                    return name;
+                }
+            }
+
+            // 方法 3：單字元名字（如「王」）
+            m = before.match(/([一-龥A-Za-z])$/);
+            if (m) {
+                const name = m[1].trim();
+                if (isValidName(name)) {
+                    console.log('[extractOwner] 方法3（單字）成功:', name);
+                    return name;
+                }
+            }
+
+            // 方法 4：分行掃描
+            const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+            for (let i = 0; i < lines.length; i++) {
+                if (lines[i].includes('感謝您的訂單')) {
+                    // 檢查同一行是否有名字
+                    const sameLineMatch = lines[i].match(/^([一-龥A-Za-z][一-龥A-Za-z0-9_ ]{0,18}[一-龥A-Za-z0-9])/);
+                    if (sameLineMatch && isValidName(sameLineMatch[1])) {
+                        console.log('[extractOwner] 方法4a（同行）成功:', sameLineMatch[1]);
+                        return sameLineMatch[1].trim();
+                    }
+                    // 往前掃描
+                    for (let j = i - 1; j >= 0 && j >= i - 5; j--) {
+                        const prev = lines[j].trim();
+                        if (!prev) continue;
+                        if (/年|月|日|上午|下午|Uber|Eats|:\d/i.test(prev)) continue;
+                        const nameMatch = prev.match(/([一-龥A-Za-z][一-龥A-Za-z0-9_ ]{0,18}[一-龥A-Za-z0-9])$/);
+                        if (nameMatch && isValidName(nameMatch[1])) {
+                            console.log('[extractOwner] 方法4b（往前找）成功:', nameMatch[1]);
+                            return nameMatch[1].trim();
+                        }
+                    }
+                    break;
+                }
+            }
+
+            console.log('[extractOwner] 所有方法都失敗');
             return null;
+        }
+
+        function isValidName(name) {
+            if (!name) return false;
+            const t = name.trim();
+            if (t.length === 0 || t.length > 20) return false;
+            if (/^\d+$/.test(t)) return false;
+            if (/年|月|日|上午|下午|Uber|Eats|總計|以下|訂單|明細/i.test(t)) return false;
+            return true;
+        }
+
+        // 手動設定團主（沒解析到 owner 時可以補上）
+        function setOwnerManually(orderIdx) {
+            const order = state.orders[orderIdx];
+            if (!order) return;
+            const currentOwner = order.owner || '';
+            const newOwner = prompt(`請輸入團主名稱：\n（訂單：${order.title}）`, currentOwner);
+            if (newOwner === null) return; // 取消
+            const trimmed = newOwner.trim();
+            if (!trimmed) {
+                if (confirm('要清除團主嗎？')) {
+                    order.owner = '';
+                    save();
+                }
+                return;
+            }
+            order.owner = trimmed;
+            save();
+            // 補上團主後，若有服務費且尚未建立交易，自動建立
+            autoCreateServiceFeeExpense(order);
         }
 
         // ===== Text Parsing =====
@@ -405,6 +562,7 @@
             state.orders.unshift(newOrder);
             activeOrderIdx = 0;
             save();
+            autoCreateServiceFeeExpense(newOrder);
             document.getElementById('orderTitle').value = '';
             document.getElementById('orderText').value = '';
             switchTab('current');
@@ -801,7 +959,9 @@
             const uncollected = total - collected;
             const checkedCount = order.items.filter(i => i.checked).length;
 
-            const ownerBadge = order.owner ? `<span style="font-size:0.65em;background:#fff3e0;color:#e65100;padding:3px 10px;border-radius:12px;margin-left:8px;font-weight:600;vertical-align:middle;">👑 團主 - ${esc(order.owner)}</span>` : '';
+            const ownerBadge = order.owner
+                ? `<span onclick="setOwnerManually(${activeOrderIdx})" style="font-size:0.65em;background:#fff3e0;color:#e65100;padding:3px 10px;border-radius:12px;margin-left:8px;font-weight:600;vertical-align:middle;cursor:pointer;" title="點擊修改團主">👑 團主 - ${esc(order.owner)}</span>`
+                : `<span onclick="setOwnerManually(${activeOrderIdx})" style="font-size:0.65em;background:#fff3e0;color:#8d6e63;padding:3px 10px;border-radius:12px;margin-left:8px;font-weight:600;vertical-align:middle;cursor:pointer;border:1px dashed #ffb74d;" title="點擊補上團主">+ 補上團主</span>`;
             let html = orderTabsHtml + `
                 <div class="order-header">
                     <h3>📋 ${esc(order.title)}${ownerBadge}</h3>
