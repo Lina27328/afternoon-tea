@@ -42,6 +42,7 @@
         .item-delete:hover { background: #ffcdd2; color: #c62828; }
         .summary { display: flex; gap: 15px; padding: 15px; background: #fff3e0; border-radius: 12px; margin-top: 15px; flex-wrap: wrap; }
         .summary-item { text-align: center; flex: 1; min-width: 80px; }
+        .manual-adjust-input:focus { outline: none; border-color: #ff9800 !important; background: #fff8e1 !important; }
         .summary-item .label { font-size: 0.72em; color: #8d6e63; margin-bottom: 4px; }
         .summary-item .value { font-size: 1.2em; font-weight: bold; }
         .summary-item .value.total { color: #e65100; }
@@ -199,10 +200,23 @@
         const ordersRef = db.ref('afternoon_tea_orders');
         const fundRef = db.ref('afternoon_tea');
 
+        // 計算額外服務費（含 Uber One 點數與手動調整）
+        function computeExtraServiceFee(fees) {
+            fees = fees || {};
+            return Math.max(0,
+                (fees.serviceFee || 0)
+                - (fees.memberReward || 0)
+                - (fees.serviceDiscount || 0)
+                + (fees.priorityDelivery || 0)
+                - (fees.uberOnePoints || 0)
+                + (fees.manualAdjust || 0)
+            );
+        }
+
         // 自動為訂單建立「服務費支出」待確認交易；同一訂單只會建立一次
         function autoCreateServiceFeeExpense(order) {
             const fees = order.fees || {};
-            const extraServiceFee = Math.max(0, (fees.serviceFee || 0) - (fees.memberReward || 0) - (fees.serviceDiscount || 0) + (fees.priorityDelivery || 0));
+            const extraServiceFee = computeExtraServiceFee(fees);
             if (extraServiceFee <= 0) return;
             if (!order.owner) return; // 沒團主資訊就不自動建立
             fundRef.once('value').then(snap => {
@@ -584,12 +598,12 @@
 
             // Split lines. Also handle case where "餐點小計金額 $439.00優先外送 $48.00" is glued together
             // by inserting newline before common fee labels that appear after a $amount
-            normalized = normalized.replace(/(\$[\d,]+(?:\.\d+)?)(優先外送|外送費優惠|外送費|服務費折扣|服務費|會員獎勵|優惠(?![券碼])|款\s*項)/g, '$1\n$2');
+            normalized = normalized.replace(/(\$[\d,]+(?:\.\d+)?)(優先外送|外送費優惠|外送費|服務費折扣|服務費|會員獎勵|Uber\s*One\s*點數|優惠(?![券碼])|款\s*項)/g, '$1\n$2');
             const lines = normalized.split('\n').map(l => l.trim()).filter(l => l);
             const items = [];
             let currentName = null;
             let parsingStarted = false;
-            let fees = { serviceFee: 0, serviceDiscount: 0, memberReward: 0, deliveryFee: 0, deliveryDiscount: 0, priorityDelivery: 0, promoDiscount: 0 };
+            let fees = { serviceFee: 0, serviceDiscount: 0, memberReward: 0, deliveryFee: 0, deliveryDiscount: 0, priorityDelivery: 0, promoDiscount: 0, uberOnePoints: 0, manualAdjust: 0 };
 
             // Helper: remove thousand separators from a matched amount
             const parseAmt = s => parseFloat(String(s).replace(/,/g, ''));
@@ -621,6 +635,9 @@
                         // Delivery fee (外送費) - must match AFTER 外送費優惠
                         fm = fLine.match(/^外送費(?!優惠).*?\$([\d,]+(?:\.\d+)?)/);
                         if (fm) { fees.deliveryFee = parseAmt(fm[1]); continue; }
+                        // Uber One 點數 (visible as `-$10.00`, treated as reduction on service fee)
+                        fm = fLine.match(/^Uber\s*One\s*點數.*?-?\$([\d,]+(?:\.\d+)?)/i);
+                        if (fm) { fees.uberOnePoints = parseAmt(fm[1]); continue; }
                         // Promo discount (優惠) - overall Uber One discount
                         fm = fLine.match(/^優惠(?![券碼]).*?-?\$([\d,]+(?:\.\d+)?)/);
                         if (fm) { fees.promoDiscount = parseAmt(fm[1]); continue; }
@@ -684,13 +701,15 @@
             if (qty > 1) itemName += ` ×${qty}`;
 
             const hasPromo = /活動/.test(itemName);
+            // 活動品項預設折扣 = 品項單價 / 2（可事後修改）
+            const defaultDiscount = hasPromo ? Math.round(amount / 2) : 0;
 
             let person = items.find(p => p.name === (name || '(未知)'));
             if (!person) {
                 person = { name: name || '(未知)', entries: [], totalAmount: 0 };
                 items.push(person);
             }
-            person.entries.push({ detail: itemName, amount, discount: 0, hasPromo });
+            person.entries.push({ detail: itemName, amount, discount: defaultDiscount, hasPromo });
             person.totalAmount += amount;
         }
 
@@ -726,6 +745,51 @@
                 promoEntries[0].discount = discount;
             }
             save();
+        }
+
+        // 手動調整額外服務費（可正可負），並同步更新 pending/transactions 中的金額
+        function updateManualAdjust(orderIdx, value) {
+            const order = state.orders && state.orders[orderIdx];
+            if (!order) return;
+            const adj = parseFloat(value);
+            if (!order.fees) order.fees = { serviceFee: 0, serviceDiscount: 0, memberReward: 0, deliveryFee: 0, deliveryDiscount: 0, priorityDelivery: 0, promoDiscount: 0, uberOnePoints: 0, manualAdjust: 0 };
+            order.fees.manualAdjust = isNaN(adj) ? 0 : adj;
+            save();
+            // 同步 fund 交易金額（如果已建立）
+            syncServiceFeeTransactionAmount(order);
+        }
+
+        // 若該訂單已有服務費交易，更新其金額；若沒有且金額 > 0，則自動建立
+        function syncServiceFeeTransactionAmount(order) {
+            if (!order || !order.owner) return;
+            const newAmount = computeExtraServiceFee(order.fees);
+            fundRef.once('value').then(snap => {
+                const fundState = snap.val() || { balance: 0, members: [], pending: [], transactions: [], wishes: [] };
+                if (!Array.isArray(fundState.pending)) fundState.pending = [];
+                if (!Array.isArray(fundState.transactions)) fundState.transactions = [];
+                let updated = false;
+                // pending 中：直接改金額；若新金額 <= 0 則移除
+                for (let i = fundState.pending.length - 1; i >= 0; i--) {
+                    if (fundState.pending[i].orderId === order.id) {
+                        if (newAmount <= 0) {
+                            fundState.pending.splice(i, 1);
+                        } else if (fundState.pending[i].amount !== newAmount) {
+                            fundState.pending[i].amount = newAmount;
+                            fundState.pending[i].note = (fundState.pending[i].note || '') + ` [已依訂單調整為 $${newAmount}]`;
+                        }
+                        updated = true;
+                    }
+                }
+                // 已 confirmed 的交易：不動金額（避免動到已對帳資料），若使用者需要調整需自行操作
+                if (updated) {
+                    fundRef.set(fundState);
+                    return;
+                }
+                // 若都沒有記錄，且新金額 > 0，自動建立一筆
+                if (newAmount > 0) {
+                    autoCreateServiceFeeExpense(order);
+                }
+            });
         }
 
         function toggleCheck(idx) {
@@ -781,10 +845,12 @@
             const idx = oIdx !== undefined ? oIdx : activeOrderIdx;
             const order = state.orders[idx];
             if (!order) return;
-            if (!confirm(`確定要刪除「${order.title}」？無法復原。`)) return;
+            if (!confirm(`確定要刪除「${order.title}」？此動作會一併移除訂購次數、熱門品項與 Fund 中的相關服務費交易，無法復原。`)) return;
+            const removedId = order.id;
             state.orders.splice(idx, 1);
             if (activeOrderIdx >= state.orders.length) activeOrderIdx = Math.max(0, state.orders.length - 1);
             save();
+            purgeFundEntriesByOrderId(removedId);
         }
 
         function selectOrder(idx) {
@@ -854,9 +920,46 @@
         }
 
         function deleteHistory(idx) {
-            if (!confirm('確定要刪除此歷史訂單？')) return;
+            const h = state.history && state.history[idx];
+            if (!h) return;
+            if (!confirm(`確定要刪除歷史訂單「${h.title}」？此動作會一併移除訂購次數、熱門品項與 Fund 中的相關服務費交易，無法復原。`)) return;
+            const removedId = h.id;
             state.history.splice(idx, 1);
             save();
+            purgeFundEntriesByOrderId(removedId);
+        }
+
+        // 移除 Fund 中所有與此 orderId 綁定的 pending/transactions
+        // - pending: 直接移除（尚未確認）
+        // - transactions.confirmed: 反轉 balance 後移除（保持基金正確）
+        function purgeFundEntriesByOrderId(orderId) {
+            if (!orderId) return;
+            fundRef.once('value').then(snap => {
+                const fundState = snap.val();
+                if (!fundState) return;
+                let changed = false;
+                if (Array.isArray(fundState.pending)) {
+                    const before = fundState.pending.length;
+                    fundState.pending = fundState.pending.filter(t => t.orderId !== orderId);
+                    if (fundState.pending.length !== before) changed = true;
+                }
+                if (Array.isArray(fundState.transactions)) {
+                    const remain = [];
+                    for (const t of fundState.transactions) {
+                        if (t.orderId === orderId) {
+                            if (t.status === 'confirmed' && typeof fundState.balance === 'number') {
+                                if (t.type === 'income') fundState.balance -= (t.amount || 0);
+                                else fundState.balance += (t.amount || 0);
+                            }
+                            changed = true;
+                        } else {
+                            remain.push(t);
+                        }
+                    }
+                    fundState.transactions = remain;
+                }
+                if (changed) fundRef.set(fundState);
+            });
         }
 
         // ===== Item Ranking (left side - per order) =====
@@ -1034,15 +1137,20 @@
             }, 0);
 
             // Calculate fees
-            // 額外服務費 = 服務費 - 會員獎勵 - 服務費折扣 + 優先外送費
+            // 額外服務費 = 服務費 - 會員獎勵 - 服務費折扣 + 優先外送費 - Uber One 點數 + 手動調整
             // 外送費 = 外送費 - 外送費優惠（互抵則為 0）
             // promoDiscount = PDF 中的「優惠」欄位（整單活動折扣）
-            const fees = order.fees || { serviceFee: 0, serviceDiscount: 0, memberReward: 0, deliveryFee: 0, deliveryDiscount: 0, priorityDelivery: 0, promoDiscount: 0 };
-            const extraServiceFee = Math.max(0, (fees.serviceFee || 0) - (fees.memberReward || 0) - (fees.serviceDiscount || 0) + (fees.priorityDelivery || 0));
+            const fees = order.fees || { serviceFee: 0, serviceDiscount: 0, memberReward: 0, deliveryFee: 0, deliveryDiscount: 0, priorityDelivery: 0, promoDiscount: 0, uberOnePoints: 0, manualAdjust: 0 };
+            if (fees.uberOnePoints === undefined) fees.uberOnePoints = 0;
+            if (fees.manualAdjust === undefined) fees.manualAdjust = 0;
+            const extraServiceFee = computeExtraServiceFee(fees);
             const netDeliveryFee = Math.max(0, (fees.deliveryFee || 0) - (fees.deliveryDiscount || 0));
             const promoDiscount = fees.promoDiscount || 0;
+            const manualAdj = fees.manualAdjust || 0;
             // 應收總計 = 品項小計 - PDF活動折扣 + 額外服務費 + 外送費
             const grandTotal = itemSubtotal - promoDiscount + extraServiceFee + netDeliveryFee;
+            const manualAdjColor = manualAdj > 0 ? '#8d6e63' : (manualAdj < 0 ? '#43a047' : '#a1887f');
+            const manualAdjSign = manualAdj > 0 ? '+' : '';
 
             html += `
                 <div class="summary">
@@ -1050,6 +1158,13 @@
                     ${promoDiscount > 0 ? `<div class="summary-item"><div class="label">活動折扣</div><div class="value" style="color:#43a047;">-$${promoDiscount.toLocaleString()}</div>${totalDiscounts > 0 ? `<div style="font-size:0.7em;color:#8d6e63;margin-top:2px;">已分配 -$${totalDiscounts}</div>` : ''}</div>` : (totalDiscounts > 0 ? `<div class="summary-item"><div class="label">活動折扣</div><div class="value" style="color:#43a047;">-$${totalDiscounts}</div></div>` : '')}
                     ${extraServiceFee > 0 ? `<div class="summary-item"><div class="label">額外服務費</div><div class="value" style="color:#8d6e63;">+$${extraServiceFee}</div></div>` : ''}
                     ${netDeliveryFee > 0 ? `<div class="summary-item"><div class="label">外送費</div><div class="value" style="color:#8d6e63;">+$${netDeliveryFee}</div></div>` : ''}
+                    <div class="summary-item" title="手動調整（可正可負，直接加減至額外服務費）">
+                      <div class="label">手動調整</div>
+                      <div class="value" style="color:${manualAdjColor};display:inline-flex;align-items:center;justify-content:center;gap:2px;">
+                        <span>${manualAdjSign}$</span>
+                        <input type="number" class="manual-adjust-input" value="${manualAdj}" onchange="updateManualAdjust(${activeOrderIdx}, this.value)" onclick="event.stopPropagation()" style="width:60px;text-align:center;font-size:1em;font-weight:bold;color:inherit;background:transparent;border:none;padding:0;font-family:inherit;">
+                      </div>
+                    </div>
                     <div class="summary-item"><div class="label">應收總計</div><div class="value total">$${grandTotal.toLocaleString()}</div></div>
                     <div class="summary-item"><div class="label">已收款</div><div class="value collected">$${collectedNet.toLocaleString()}</div></div>
                     <div class="summary-item"><div class="label">未收款</div><div class="value uncollected">$${(grandTotal - collectedNet).toLocaleString()}</div></div>
