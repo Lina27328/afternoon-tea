@@ -657,11 +657,16 @@
                     break;
                 }
 
-                // Detect start: "(您)" in line
+                // Detect start:
+                //   1. "(您)" — 團主自己有訂購 (name 行含「(您)」)
+                //   2. "已使用 Uber One 優惠和其他獎勵" 或 "訂購的電子明細" — 團主未訂時，用此當品項清單起點
                 if (!parsingStarted) {
                     if (/\(您\)/.test(line)) {
                         parsingStarted = true;
                         currentName = line.replace(/\s*\(您\)\s*/, '').replace(/^\s+|\s+$/g, '');
+                    } else if (/已使用.*獎勵|訂購的電子明細/.test(line)) {
+                        parsingStarted = true;
+                        // currentName 留 null，等待下一個人名行填入
                     }
                     continue;
                 }
