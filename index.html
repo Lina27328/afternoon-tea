@@ -48,7 +48,17 @@ body{font-family:'Segoe UI','Microsoft JhengHei',sans-serif;background:linear-gr
 .hero-row .payment-section{width:100%;margin-bottom:0;text-align:center}
 
 /* Water ball */
-.ball-hero{display:flex;justify-content:center;margin:20px 0 40px;position:relative}
+.ball-hero{display:flex;justify-content:center;align-items:center;gap:30px;margin:20px 0 40px;position:relative;flex-wrap:wrap}
+.donor-card{background:linear-gradient(135deg,#fff8e1,#ffecb3);border:2px solid #ffcc80;border-radius:16px;padding:16px 18px;min-width:240px;max-width:300px;box-shadow:var(--shadow-lg)}
+.donor-title{font-size:0.95em;font-weight:700;color:#e65100;margin-bottom:10px;display:flex;align-items:center;gap:6px;border-bottom:1.5px dashed #ffb74d;padding-bottom:8px}
+.donor-list{display:flex;flex-direction:column;gap:6px;max-height:200px;overflow-y:auto;padding-right:4px}
+.donor-list::-webkit-scrollbar{width:5px}
+.donor-list::-webkit-scrollbar-thumb{background:#ffcc80;border-radius:3px}
+.donor-item{display:flex;align-items:center;justify-content:space-between;padding:6px 10px;background:rgba(255,255,255,0.7);border-radius:8px;font-size:0.85em}
+.donor-item .donor-name{color:#5d4037;font-weight:600}
+.donor-item .donor-amount{color:#e65100;font-weight:700;white-space:nowrap;margin-left:8px}
+.donor-empty{color:#8d6e63;font-size:0.85em;padding:12px;text-align:center;font-style:italic}
+.donor-total{margin-top:8px;padding-top:8px;border-top:1.5px dashed #ffb74d;font-size:0.82em;color:#5d4037;text-align:right;font-weight:600}
 .ball-container{position:relative;width:240px;height:240px}
 .water-ball{width:240px;height:240px;border-radius:50%;position:relative;overflow:hidden;box-shadow:var(--shadow-lg);animation:float 3s ease-in-out infinite;border:5px solid var(--border-soft);background:#fffef8}
 .water-ball.red{border-color:#ef9a9a;background:#fff5f5}
@@ -111,8 +121,13 @@ body{font-family:'Segoe UI','Microsoft JhengHei',sans-serif;background:linear-gr
 .stat-card:hover{transform:translateY(-2px)}
 .stat-title{font-size:0.95em;color:var(--orange-deep);font-weight:700;margin-bottom:14px;display:flex;align-items:center;gap:6px}
 .stat-list{display:flex;flex-direction:column;gap:8px}
-.stat-item{display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--cream-light);border-radius:10px;transition:all 0.2s}
+.stat-scroll{max-height:280px;overflow-y:auto;padding-right:4px}
+.stat-scroll::-webkit-scrollbar{width:6px}
+.stat-scroll::-webkit-scrollbar-thumb{background:var(--cream-dark);border-radius:3px}
+.stat-scroll::-webkit-scrollbar-thumb:hover{background:var(--orange-light)}
+.stat-item{display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--cream-light);border-radius:10px;transition:all 0.2s;cursor:pointer}
 .stat-item:hover{background:var(--cream-dark)}
+.stat-item.selected{background:linear-gradient(135deg,#fff3e0,#ffe0b2);border:1.5px solid var(--orange-light);box-shadow:0 2px 6px rgba(255,152,0,0.15)}
 .stat-rank{font-weight:700;color:var(--orange-deep);min-width:24px;font-size:0.9em}
 .stat-name{flex:1;font-size:0.87em;color:var(--brown);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .stat-value{font-size:0.78em;color:var(--brown-light);font-weight:600;white-space:nowrap}
@@ -389,6 +404,13 @@ body{font-family:'Segoe UI','Microsoft JhengHei',sans-serif;background:linear-gr
             <span class="ball-label">☕ 服務費基金餘額</span>
           </div>
         </div>
+        <div class="donor-card">
+          <div class="donor-title">💐 基金芳名錄</div>
+          <div class="donor-list" id="donorList">
+            <div class="donor-empty">尚無捐款紀錄</div>
+          </div>
+          <div class="donor-total" id="donorTotal" style="display:none;"></div>
+        </div>
       </div>
 
       <!-- Payment Info -->
@@ -422,13 +444,13 @@ body{font-family:'Segoe UI','Microsoft JhengHei',sans-serif;background:linear-gr
     <!-- Stats -->
     <div class="stats-grid">
       <div class="stat-card">
-        <div class="stat-title">🏪 近三次訂購店家</div>
-        <div class="stat-list" id="recentStores">
+        <div class="stat-title">🏪 訂購店家（點擊查看熱門品項）</div>
+        <div class="stat-list stat-scroll" id="recentStores">
           <div class="stat-empty">尚無訂購紀錄</div>
         </div>
       </div>
       <div class="stat-card">
-        <div class="stat-title">🏆 熱門品項 TOP 5</div>
+        <div class="stat-title" id="popularItemsTitle">🏆 熱門品項 TOP 5</div>
         <div class="stat-list" id="popularItems">
           <div class="stat-empty">尚無訂購紀錄</div>
         </div>
@@ -625,7 +647,7 @@ function init(){
     if(!isFirstLoad && cnt>previousPendingCount){const n=state.pending[0];if(n)sendNotif('☕ 下午茶基金｜新交易待確認',`${n.person} 提交了 ${n.type==='income'?'+':'-'}$${n.amount.toLocaleString()}（${n.description}）`)}
     if(!isFirstLoad && state.transactions?.length>0){const l=state.transactions[0];if(l.status==='confirmed'&&l.confirmedTime&&Date.now()-new Date(l.confirmedTime).getTime()<5000)sendNotif('☕ 交易已確認 ✅',`${l.confirmedBy} 確認了 $${l.amount.toLocaleString()}\n目前餘額：$${state.balance.toLocaleString()}`)}
     previousPendingCount=cnt;isFirstLoad=false;
-    renderMembers();renderPending();renderHistory();updateBall();updateBadge();renderWishes();
+    renderMembers();renderPending();renderHistory();updateBall();updateBadge();renderWishes();renderDonorList();
   });
   ordersRef.on('value',s=>{const d=s.val();if(d){orderState=d;if(!orderState.orders)orderState.orders=[];if(!orderState.history)orderState.history=[]}renderStats()});
 }
@@ -729,22 +751,60 @@ function deleteWish(id){if(!confirm('刪除這個許願？'))return;state.wishes
 function renderWishes(){const l=document.getElementById('wishList'),ws=state.wishes||[];if(ws.length===0){l.innerHTML='<div class="empty-state" style="padding:20px"><p>還沒有人許願！</p></div>'}else{const s=[...ws].sort((a,b)=>b.votes-a.votes);l.innerHTML=s.map(w=>`<div class="wish-item"><span class="wish-name">${esc(w.name)}</span><span class="wish-votes">${w.votes} 票</span><button class="vote-btn" onclick="voteWish(${w.id})">+1</button><button class="wish-delete" onclick="deleteWish(${w.id})">✕</button></div>`).join('')}renderPodium(ws)}
 function renderPodium(ws){const s=[...(ws||[])].sort((a,b)=>b.votes-a.votes),p=document.getElementById('podium'),t3=[s[1]||null,s[0]||null,s[2]||null],m=['🥈','🥇','🥉'],c=['podium-2','podium-1','podium-3'];p.innerHTML=t3.map((it,i)=>`<div class="podium-item ${c[i]}"><div class="rank">${m[i]}</div><div class="shop-name">${it?esc(it.name):'-'}</div><div class="vote-count">${it?it.votes+' 票':'0 票'}</div></div>`).join('')}
 
+// 基金芳名錄：列出「已入帳的收入」捐款人，同人金額累加
+function renderDonorList(){
+  const el=document.getElementById('donorList');
+  const totalEl=document.getElementById('donorTotal');
+  if(!el)return;
+  const donations=(state.transactions||[]).filter(t=>t.type==='income'&&t.status==='confirmed');
+  if(donations.length===0){el.innerHTML='<div class="donor-empty">尚無捐款紀錄</div>';totalEl.style.display='none';return}
+  const map={};
+  donations.forEach(t=>{const p=t.person||'(匿名)';map[p]=(map[p]||0)+(t.amount||0)});
+  const sorted=Object.entries(map).sort((a,b)=>b[1]-a[1]);
+  const medals=['🥇','🥈','🥉'];
+  el.innerHTML=sorted.map(([name,amt],i)=>{const badge=i<3?medals[i]:'💰';return `<div class="donor-item"><span class="donor-name">${badge} ${esc(name)}</span><span class="donor-amount">$${amt.toLocaleString()}</span></div>`}).join('');
+  const total=sorted.reduce((s,[,a])=>s+a,0);
+  totalEl.style.display='block';
+  totalEl.textContent=`共 ${sorted.length} 人・累計 $${total.toLocaleString()}`;
+}
+
+let selectedStoreName='__ALL__'; // 目前選中的店家（'__ALL__' 表示全部）
 function renderStats(){
   const allOrders=[...(orderState.orders||[]),...(orderState.history||[])];
-  // Recent 3 stores
+  // 左側：所有店家依「最近訂購時間」排序，去重後全部顯示（可捲動）
   const rEl=document.getElementById('recentStores');
-  const seen=new Set(),recent=[];
-  const sorted=allOrders.slice().sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
-  for(const o of sorted){if(!o.title)continue;let name=o.title.replace(/^\d+\/\d+\s*/,'').trim()||o.title;if(!seen.has(name)){seen.add(name);recent.push({name,date:new Date(o.createdAt)});if(recent.length>=3)break}}
-  if(recent.length===0)rEl.innerHTML='<div class="stat-empty">尚無訂購紀錄</div>';
-  else rEl.innerHTML=recent.map((r,i)=>`<div class="stat-item"><span class="stat-rank">${i+1}.</span><span class="stat-name">${esc(r.name)}</span><span class="stat-value">${r.date.getMonth()+1}/${r.date.getDate()}</span></div>`).join('');
+  const storeMap=new Map(); // name -> {name, latestDate, count}
+  allOrders.forEach(o=>{if(!o.title)return;const name=o.title.replace(/^\d+\/\d+\s*/,'').trim()||o.title;const d=new Date(o.createdAt);if(!storeMap.has(name))storeMap.set(name,{name,latestDate:d,count:1});else{const s=storeMap.get(name);s.count++;if(d>s.latestDate)s.latestDate=d}});
+  const stores=[...storeMap.values()].sort((a,b)=>b.latestDate-a.latestDate);
+  if(stores.length===0){rEl.innerHTML='<div class="stat-empty">尚無訂購紀錄</div>';document.getElementById('popularItemsTitle').textContent='🏆 熱門品項 TOP 5';renderPopularItemsForStore(null);return}
 
-  // Popular items TOP5
+  // 若目前選中的店家已不存在（例如訂單被刪掉），fallback 到 __ALL__
+  if(selectedStoreName!=='__ALL__'&&!storeMap.has(selectedStoreName))selectedStoreName='__ALL__';
+
+  const allSel=selectedStoreName==='__ALL__'?'selected':'';
+  const allRow=`<div class="stat-item ${allSel}" onclick="selectStore('__ALL__')"><span style="min-width:24px;text-align:center">📊</span><span class="stat-name" style="font-weight:600">全部店家</span><span class="stat-value">${stores.reduce((s,x)=>s+x.count,0)}次</span></div>`;
+  const rowsHtml=stores.map((s,i)=>{const sel=selectedStoreName===s.name?'selected':'';const dateStr=`${s.latestDate.getMonth()+1}/${s.latestDate.getDate()}`;return `<div class="stat-item ${sel}" onclick="selectStore('${encodeURIComponent(s.name)}')"><span class="stat-rank">${i+1}.</span><span class="stat-name">${esc(s.name)}</span><span class="stat-value" title="共 ${s.count} 次・最近 ${dateStr}">${s.count}次</span></div>`}).join('');
+  rEl.innerHTML=allRow+rowsHtml;
+
+  // 右側：依選中店家計算 top5
+  renderPopularItemsForStore(selectedStoreName==='__ALL__'?null:selectedStoreName);
+  document.getElementById('popularItemsTitle').textContent=selectedStoreName==='__ALL__'?'🏆 熱門品項 TOP 5（全部店家）':`🏆 熱門品項 TOP 5・${selectedStoreName}`;
+}
+
+function selectStore(encodedName){
+  selectedStoreName=encodedName==='__ALL__'?'__ALL__':decodeURIComponent(encodedName);
+  renderStats();
+}
+
+function renderPopularItemsForStore(storeName){
+  const allOrders=[...(orderState.orders||[]),...(orderState.history||[])];
+  const filtered=storeName?allOrders.filter(o=>{if(!o.title)return false;const n=o.title.replace(/^\d+\/\d+\s*/,'').trim()||o.title;return n===storeName}):allOrders;
   const pEl=document.getElementById('popularItems'),cm={};
-  allOrders.forEach(o=>{(o.items||[]).forEach(p=>{(p.entries||[]).forEach(e=>{let n=e.detail;let q=1;const qm=n.match(/\s*×(\d+)$/);if(qm){q=parseInt(qm[1]);n=n.replace(/\s*×\d+$/,'')}if(!cm[n])cm[n]=0;cm[n]+=q})})});
+  filtered.forEach(o=>{(o.items||[]).forEach(p=>{(p.entries||[]).forEach(e=>{let n=e.detail;let q=1;const qm=n.match(/\s*×(\d+)$/);if(qm){q=parseInt(qm[1]);n=n.replace(/\s*×\d+$/,'')}if(!cm[n])cm[n]=0;cm[n]+=q})})});
   const psorted=Object.entries(cm).sort((a,b)=>b[1]-a[1]).slice(0,5);
-  if(psorted.length===0)pEl.innerHTML='<div class="stat-empty">尚無訂購紀錄</div>';
-  else{const medals=['🥇','🥈','🥉'],max=psorted[0][1];pEl.innerHTML=psorted.map(([n,c],i)=>{const rank=i<3?medals[i]:`<span class="stat-rank">${i+1}.</span>`;const bw=Math.max(10,(c/max)*100);return `<div class="stat-item"><span style="min-width:24px;text-align:center">${rank}</span><span class="stat-name">${esc(n)}</span><div class="stat-bar"><div class="stat-bar-fill" style="width:${bw}%"></div></div><span class="stat-value">${c}杯</span></div>`}).join('')}
+  if(psorted.length===0){pEl.innerHTML='<div class="stat-empty">尚無訂購紀錄</div>';return}
+  const medals=['🥇','🥈','🥉'],max=psorted[0][1];
+  pEl.innerHTML=psorted.map(([n,c],i)=>{const rank=i<3?medals[i]:`<span class="stat-rank">${i+1}.</span>`;const bw=Math.max(10,(c/max)*100);return `<div class="stat-item"><span style="min-width:24px;text-align:center">${rank}</span><span class="stat-name">${esc(n)}</span><div class="stat-bar"><div class="stat-bar-fill" style="width:${bw}%"></div></div><span class="stat-value">${c}杯</span></div>`}).join('');
 }
 
 // Enter key handling
