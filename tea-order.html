@@ -33,6 +33,9 @@
         .checkbox { width: 24px; height: 24px; border: 2px solid #ffb74d; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all 0.2s; }
         .checkbox.checked { background: #66bb6a; border-color: #43a047; }
         .checkbox.checked::after { content: '✓'; color: #fff; font-weight: bold; font-size: 14px; }
+        .checkbox.locked { background: #eeeeee; border-color: #bdbdbd; cursor: not-allowed; opacity: 0.6; }
+        .checkbox.locked.checked { background: #a5d6a7; border-color: #81c784; }
+        .checkbox.locked:hover::before { content: '🔒'; position: absolute; font-size: 10px; }
         .item-name { font-weight: 600; color: #5d4037; min-width: 60px; max-width: 180px; cursor: pointer; border-bottom: 1px dashed transparent; }
         .item-name:hover { border-bottom-color: #ff9800; color: #e65100; }
         .item-detail { flex: 1; color: #8d6e63; font-size: 0.85em; line-height: 1.4; }
@@ -250,6 +253,8 @@
         let state = { orders: [], history: [] };
         let editingNameIndex = -1;
         let activeOrderIdx = 0; // which order is currently being viewed
+        let editMode = false; // 對帳編輯模式（勾選需要密碼解鎖）
+        const EDIT_PASSWORD = '0000'; // 編輯模式密碼
 
         function init() {
             ordersRef.on('value', (snapshot) => {
@@ -258,11 +263,16 @@
                     state = data;
                     if (!state.orders) state.orders = [];
                     if (!state.history) state.history = [];
-                    if (!state.teamsNameMap) state.teamsNameMap = {};
                     // Migration: if old format has 'current', move it into orders
                     if (state.current) {
                         state.orders.unshift(state.current);
                         delete state.current;
+                        save();
+                        return;
+                    }
+                    // Cleanup: 移除舊 Teams 對照表殘留資料
+                    if (state.teamsNameMap !== undefined) {
+                        delete state.teamsNameMap;
                         save();
                         return;
                     }
@@ -686,8 +696,12 @@
                 // Skip customization/addon lines
                 if (isSkipLine(line)) continue;
 
-                // If none matched, treat as person name
-                currentName = line.replace(/\s*\(您\)\s*/, '').trim();
+                // If none matched, treat as person name (only if it looks like a name)
+                const candidate = line.replace(/\s*\(您\)\s*/, '').trim();
+                if (isLikelyName(candidate)) {
+                    currentName = candidate;
+                }
+                // 否則保留原本的 currentName（讓後續品項延續前一個人）
             }
 
             return { items, fees };
@@ -715,20 +729,35 @@
         }
 
         function isSkipLine(line) {
-            if (/^(無糖|微糖|半糖|少糖|全糖)/i.test(line)) return true;
+            if (/^(無糖|微糖|半糖|少糖|全糖|正常糖|一分糖|三分糖|五分糖|七分糖)/i.test(line)) return true;
             if (/^[1-5]\s*分\s*[,，]/i.test(line)) return true;
             if (/^(微冰|少冰|去冰|完全去冰|固定冰量|固定甜度|溫|熱|冷)/i.test(line)) return true;
             if (/^[LM]\s*[\(（,，]/i.test(line)) return true;
             if (/^(杯|L|M)\s*[,，]/i.test(line)) return true;
             if (/^[\(（]\s*\$/i.test(line)) return true;
-            if (/^(白玉珍珠|蒟蒻|粉條|茶王凍)/i.test(line)) return true;
+            if (/^(白玉珍珠|蒟蒻|粉條|茶王凍|墨玉|咖啡凍|蕎麥凍)/i.test(line)) return true;
             if (/^杯\s*[\(（]/i.test(line)) return true;
             if (/^(L|M)\s*$/i.test(line)) return true;
             if (/^\d+\s*分\s*$/i.test(line)) return true;
             if (/^L,\s/i.test(line)) return true;
             if (/^M,\s/i.test(line)) return true;
             if (/^蒟蒻/i.test(line)) return true;
+            // 杯型行（大杯/中杯/小杯 或 Large/Medium/Small 開頭），可能帶加料與價格說明
+            if (/^(大杯|中杯|小杯)/.test(line)) return true;
+            if (/^(Large|Medium|Small)[\s\(（,]/i.test(line)) return true;
+            // 純 addon/描述行
+            if (/^(Half\s*Ice|Ice[- ]?Free|Sugar[- ]?Free|Coffee\s*Jelly|Buckwheat|Not\s*Suitable|Will\s*Be|If\s*Order|\(Lacto|\(Vegan)/i.test(line)) return true;
             return false;
+        }
+
+        // 判斷該行是否「像人名」（避免把加料行誤當人名）
+        function isLikelyName(line) {
+            if (!line || line.length > 20) return false;
+            if (/[\$【】\(\)（）]/.test(line)) return false;  // 含金額/註記/括號一定不是名字
+            if (/[,，]/.test(line)) return false;              // 加料行常含逗號分隔
+            if (/^\d+\s+.+\$/.test(line)) return false;       // 品項行「1 XXX $YY」
+            if (/^(大杯|中杯|小杯|Large|Medium|Small|Half|Ice|Sugar|Room|Warm|Hot|Not|If|Will)/i.test(line)) return false;
+            return true;
         }
 
         // ===== Order Actions =====
@@ -748,18 +777,6 @@
             save();
         }
 
-        // 取得 PDF 名字 → Teams 顯示名稱 對照表
-        function getTeamsNameMap() {
-            if (!state.teamsNameMap) state.teamsNameMap = {};
-            return state.teamsNameMap;
-        }
-
-        // 將 PDF 名字轉成 Teams 顯示名稱（找不到就返回原名）
-        function toTeamsName(name) {
-            const map = getTeamsNameMap();
-            return map[name] || name;
-        }
-
         // 複製催繳訊息到剪貼簿（Teams 格式）
         function copyOverdueReminder(orderIdx) {
             const order = state.orders && state.orders[orderIdx];
@@ -770,7 +787,6 @@
             const dateStr = dateMatch ? dateMatch[1] : '';
             const storeName = (order.title || '').replace(/^\d{1,2}\/\d{1,2}\s*/, '').trim() || order.title;
             const lines = [];
-            const missing = [];
             lines.push(`📢 ${dateStr} ${storeName} 對帳提醒`);
             lines.push('');
             lines.push('以下同仁請確認是否已付款，尚未付款的麻煩盡快處理，謝謝 🙏');
@@ -778,9 +794,7 @@
             unpaid.forEach(i => {
                 const disc = (i.entries || []).reduce((ds, e) => ds + (e.discount || 0), 0);
                 const net = i.totalAmount - disc;
-                const teamsName = toTeamsName(i.name);
-                if (teamsName === i.name) missing.push(i.name);
-                lines.push(`• @${teamsName}  $${net}`);
+                lines.push(`• @${i.name}  $${net}`);
             });
             const totalUnpaid = unpaid.reduce((s, i) => {
                 const disc = (i.entries || []).reduce((ds, e) => ds + (e.discount || 0), 0);
@@ -789,81 +803,14 @@
             lines.push('');
             lines.push(`合計未收：$${totalUnpaid.toLocaleString()}`);
             if (order.owner) {
-                lines.push(`團主：${toTeamsName(order.owner)}`);
+                lines.push(`團主：${order.owner}`);
             }
             const msg = lines.join('\n');
-            const warnText = missing.length > 0
-                ? `\n\n⚠️ 這些成員尚未設定 Teams 對照名稱（可能無法自動 tag）：\n${missing.join('、')}\n\n可點紅色警示區的「⚙️」按鈕補上`
-                : '';
             navigator.clipboard.writeText(msg).then(() => {
-                alert(`✅ 已複製催繳訊息（${unpaid.length} 位）到剪貼簿\n\n貼到 Teams 群組後，@ 開頭的文字應該會自動變成 tag${warnText}`);
+                alert(`✅ 已複製催繳訊息（${unpaid.length} 位）到剪貼簿\n\n可直接貼到 Teams 群組`);
             }).catch(() => {
-                // fallback: prompt window for manual copy
                 prompt('請手動複製以下訊息（Ctrl+A 全選 → Ctrl+C 複製）：', msg);
             });
-        }
-
-        // 開啟 Teams 名稱對照表編輯視窗
-        function openTeamsMapModal() {
-            const map = getTeamsNameMap();
-            // 從所有訂單中收集出現過的 PDF 名字
-            const names = new Set();
-            const scan = (list) => (list || []).forEach(o => (o.items || []).forEach(i => { if (i.name && i.name !== '(未知)' && i.name !== '(未填)') names.add(i.name); }));
-            scan(state.orders);
-            scan(state.history);
-            // 也把已經在對照表裡但可能訂單中不存在的名字加進來
-            Object.keys(map).forEach(n => names.add(n));
-            const sorted = [...names].sort();
-            const rowsHtml = sorted.length === 0
-                ? '<div style="color:#8d6e63;padding:12px;text-align:center;">目前沒有成員名單，等訂單建立後會自動出現</div>'
-                : sorted.map(name => {
-                    const teamsName = map[name] || '';
-                    const bg = teamsName ? '#f1f8e9' : '#fff3e0';
-                    const borderColor = teamsName ? '#c5e1a5' : '#ffe0b2';
-                    const icon = teamsName ? '✅' : '⚠️';
-                    return `
-                    <div style="display:flex;align-items:center;gap:8px;padding:8px;background:${bg};border-radius:8px;border:1px solid ${borderColor};margin-bottom:6px;">
-                        <span style="min-width:80px;font-weight:600;color:#5d4037;font-size:0.9em;">${esc(name)}</span>
-                        <span style="color:#8d6e63;">→</span>
-                        <input type="text" data-pdfname="${esc(name)}" value="${String(teamsName).replace(/"/g, '&quot;')}" placeholder="Teams 上的完整名稱" style="flex:1;padding:6px 10px;border:1px solid #ffcc80;border-radius:6px;font-family:inherit;font-size:0.85em;background:#fff;">
-                        <span style="font-size:0.9em;">${icon}</span>
-                    </div>`;
-                }).join('');
-            const html = `
-                <div id="teamsMapModal" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;">
-                    <div style="background:#fff;border-radius:14px;max-width:560px;width:100%;max-height:85vh;overflow-y:auto;padding:20px;box-shadow:0 8px 30px rgba(0,0,0,0.25);">
-                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-                            <h3 style="margin:0;color:#e65100;">👥 Teams 名稱對照表</h3>
-                            <button onclick="document.getElementById('teamsMapModal').remove()" style="background:#f5f5f5;border:none;color:#8d6e63;width:32px;height:32px;border-radius:6px;font-size:1em;cursor:pointer;">✕</button>
-                        </div>
-                        <div style="background:#fff8e1;border-left:4px solid #ff9800;padding:10px 12px;border-radius:6px;margin-bottom:14px;font-size:0.82em;color:#5d4037;line-height:1.5;">
-                            填入 <strong>Teams 上完整顯示的名稱</strong>（如「王小雅 Sunny.Wang」）<br>
-                            複製催繳訊息時會自動用 Teams 名稱代替 PDF 名字，貼到 Teams 就能自動 tag ✨
-                        </div>
-                        <div id="teamsMapRows">${rowsHtml}</div>
-                        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
-                            <button onclick="document.getElementById('teamsMapModal').remove()" style="background:#f5f5f5;border:none;color:#8d6e63;padding:8px 18px;border-radius:8px;cursor:pointer;font-family:inherit;">取消</button>
-                            <button onclick="saveTeamsMap()" style="background:#ff9800;border:none;color:#fff;padding:8px 18px;border-radius:8px;cursor:pointer;font-family:inherit;font-weight:600;">💾 儲存</button>
-                        </div>
-                    </div>
-                </div>`;
-            const wrap = document.createElement('div');
-            wrap.innerHTML = html;
-            document.body.appendChild(wrap.firstElementChild);
-        }
-
-        function saveTeamsMap() {
-            const map = getTeamsNameMap();
-            document.querySelectorAll('#teamsMapRows input[data-pdfname]').forEach(inp => {
-                const pdfName = inp.getAttribute('data-pdfname');
-                const teamsName = inp.value.trim();
-                if (teamsName) map[pdfName] = teamsName;
-                else delete map[pdfName];
-            });
-            save();
-            const modal = document.getElementById('teamsMapModal');
-            if (modal) modal.remove();
-            alert('✅ 對照表已儲存');
         }
 
         // 手動調整額外服務費（可正可負），並同步更新 pending/transactions 中的金額
@@ -912,10 +859,30 @@
         }
 
         function toggleCheck(idx) {
+            if (!editMode) {
+                alert('🔒 目前為檢視模式\n請先點右上角「🔓 進入編輯模式」並輸入密碼');
+                return;
+            }
             const order = getActiveOrder();
             if (!order) return;
             order.items[idx].checked = !order.items[idx].checked;
             save();
+        }
+
+        function toggleEditMode() {
+            if (editMode) {
+                editMode = false;
+                render();
+                return;
+            }
+            const pw = prompt('請輸入編輯模式密碼：');
+            if (pw === null) return; // 取消
+            if (pw !== EDIT_PASSWORD) {
+                alert('❌ 密碼錯誤');
+                return;
+            }
+            editMode = true;
+            render();
         }
 
         function deleteItem(idx) {
@@ -1192,7 +1159,10 @@
             const isOverdue = ageMs >= overdueThresholdMs;
             const unpaidItems = order.items.filter(i => !i.checked && i.totalAmount > 0);
             const overdueBannerHtml = (isOverdue && unpaidItems.length > 0) ? (() => {
+                const ageMin = Math.floor(ageMs / (60 * 1000));
+                const ageHr = Math.floor(ageMs / (60 * 60 * 1000));
                 const ageDays = Math.floor(ageMs / (24 * 60 * 60 * 1000));
+                const ageLabel = ageDays >= 1 ? `${ageDays} 天` : (ageHr >= 1 ? `${ageHr} 小時` : `${ageMin} 分鐘`);
                 const totalUnpaid = unpaidItems.reduce((s, i) => {
                     const disc = (i.entries || []).reduce((ds, e) => ds + (e.discount || 0), 0);
                     return s + (i.totalAmount - disc);
@@ -1207,10 +1177,9 @@
                   <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
                     <div style="display:flex;align-items:center;gap:8px;color:#8b0000;font-weight:700;font-size:0.95em;">
                       <span style="font-size:1.3em;">⚠️</span>
-                      <span>逾期未付款 (${ageDays} 天)：共 ${unpaidItems.length} 位・未收 $${totalUnpaid.toLocaleString()}</span>
+                      <span>逾期未付款 (${ageLabel})：共 ${unpaidItems.length} 位・未收 $${totalUnpaid.toLocaleString()}</span>
                     </div>
                     <div style="display:flex;gap:6px;">
-                      <button onclick="openTeamsMapModal()" title="設定 Teams 名稱對照表" style="background:#fff;color:#c62828;border:1px solid #c62828;border-radius:8px;padding:6px 10px;font-size:0.78em;cursor:pointer;font-weight:600;font-family:inherit;">⚙️</button>
                       <button onclick="copyOverdueReminder(${activeOrderIdx})" style="background:#c62828;color:#fff;border:none;border-radius:8px;padding:6px 12px;font-size:0.78em;cursor:pointer;font-weight:600;font-family:inherit;box-shadow:0 2px 6px rgba(0,0,0,0.15);">📋 複製催繳訊息</button>
                     </div>
                   </div>
@@ -1220,8 +1189,9 @@
 
             let html = orderTabsHtml + `
                 <div class="order-header">
-                    <h3>📋 ${esc(order.title)}${ownerBadge}</h3>
-                    <div style="display:flex;gap:8px;">
+                    <h3>📋 ${esc(order.title)}${ownerBadge}${editMode ? '<span style="margin-left:8px;background:#43a047;color:#fff;font-size:0.55em;padding:3px 8px;border-radius:10px;vertical-align:middle;">🔓 編輯中</span>' : ''}</h3>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                        <button class="btn btn-sm" onclick="toggleEditMode()" style="background:${editMode ? '#43a047' : '#78909c'};color:#fff;">${editMode ? '🔒 結束編輯' : '🔓 進入編輯模式'}</button>
                         <button class="btn btn-success btn-sm" onclick="archiveOrder()">✓ 封存</button>
                         <button class="btn btn-danger btn-sm" onclick="deleteOrder()">🗑 刪除</button>
                     </div>
@@ -1275,7 +1245,7 @@
 
                 return `
                 <div class="order-item ${item.checked ? 'checked' : ''}">
-                    <div class="checkbox ${item.checked ? 'checked' : ''}" onclick="toggleCheck(${idx})"></div>
+                    <div class="checkbox ${item.checked ? 'checked' : ''} ${editMode ? '' : 'locked'}" onclick="toggleCheck(${idx})" title="${editMode ? '點擊切換勾選' : '🔒 需先進入編輯模式'}"></div>
                     <span class="item-name" onclick="showEditName(${idx})" title="點擊修改名字">${esc(item.name)}</span>
                     <span class="item-detail">${detailHtml}</span>
                     ${discountHtml}
